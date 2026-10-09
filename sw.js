@@ -1,6 +1,6 @@
 // Offline support: keeps the app and its libraries on the device so it opens with no signal.
 // Firebase handles its own offline data; this only caches the app files.
-const CACHE = "bcj-ad5703ed76";
+const CACHE = "bcj-61a49003a3";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "favicon.png",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js",

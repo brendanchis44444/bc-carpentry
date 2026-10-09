@@ -401,7 +401,7 @@ const ic = (n, cls) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 const bizName = () => S().trading || S().name || "My business";
 /* job number = the digits of its quote number, so #0004 is the job quoted on Q-0004 */
 const jobNo = j => j && j.quoteNo ? "#" + String(j.quoteNo).replace(/^\D+/, "") : "";
-const jobLabel = j => j ? [jobNo(j), j.title || "Untitled job"].filter(Boolean).join(" ") : "";
+const jobLabel = j => j ? [jobNo(j), j.title || "Untitled job"].filter(Boolean).join(" - ") : "";
 const OPEN_ST = ["lead","quoted","won","active"];
 function jobOptions(sel, empty){
   const js = all("job").filter(j => j.status !== "lost" || j.id === sel).sort((a, b) => String(b.quoteNo || "").localeCompare(String(a.quoteNo || "")) || (a.title || "").localeCompare(b.title || ""));
@@ -868,7 +868,7 @@ VIEWS.home = () => {
 };
 function jobItem(j, sub){
   const c = clientOf(j), q = quoteCalc(j);
-  return `<div class="item" data-act="openjob" data-id="${j.id}"><div class="main"><div class="t">${jobNo(j) ? `<span class="jno">${jobNo(j)}</span> ` : ""}${esc(j.title || "Untitled job")}</div><div class="s">${esc([c.name, j.site].filter(Boolean).join(" · "))}${sub ? " · " + esc(sub) : ""}</div></div><div class="r">${jobPill(j)}<div class="small num" style="margin-top:2px">${q.total ? fmtMoney(q.total) + (q.tbc ? "+" : "") : ""}</div></div></div>`;
+  return `<div class="item" data-act="openjob" data-id="${j.id}"><div class="main"><div class="t">${jobNo(j) ? `<span class="jno">${jobNo(j)}</span> - ` : ""}${esc(j.title || "Untitled job")}</div><div class="s">${esc([c.name, j.site].filter(Boolean).join(" · "))}${sub ? " · " + esc(sub) : ""}</div></div><div class="r">${jobPill(j)}<div class="small num" style="margin-top:2px">${q.total ? fmtMoney(q.total) + (q.tbc ? "+" : "") : ""}</div></div></div>`;
 }
 function invItem(i){
   const c = getDoc(i.clientId);
@@ -1113,7 +1113,7 @@ const byDT = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.star
 const eventsOn = d => all("event").filter(e => e.date === d || (e.end_date && e.date <= d && e.end_date >= d)).sort(byDT);
 function evRow(e, showDate){
   const j = getDoc(e.jobId);
-  return `<div class="evrow" data-act="editevent" data-id="${e.id}" style="cursor:pointer"><span class="bar t-${e.type || "work"}"></span><span class="time">${showDate ? dShort(e.date).slice(0, 10) + "<br>" : ""}${e.start ? t12(e.start) : "All day"}</span><div class="grow"><div style="font-weight:600">${esc(e.title || (j ? j.title : "Event"))}</div><div class="small muted">${esc([EV_TYPES.find(t => t[0] === e.type)?.[1], j && e.title ? j.title : "", e.where].filter(Boolean).join(" · "))}</div></div></div>`;
+  return `<div class="evrow" data-act="editevent" data-id="${e.id}" style="cursor:pointer"><span class="bar t-${e.type || "work"}"></span><span class="time">${showDate ? dShort(e.date).slice(0, 10) + "<br>" : ""}${e.start ? t12(e.start) : "All day"}</span><div class="grow"><div style="font-weight:600">${esc(e.title || (j ? jobLabel(j) : "Event"))}</div><div class="small muted">${esc([EV_TYPES.find(t => t[0] === e.type)?.[1], j && e.title ? jobLabel(j) : "", e.where].filter(Boolean).join(" · "))}</div></div></div>`;
 }
 function weekStart(d){ const x = parseD(d); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return ymd(x); }
 VIEWS.calendar = () => {
@@ -1125,7 +1125,7 @@ VIEWS.calendar = () => {
   const grid = cells.map(d => {
     const evs = eventsOn(d), log = getDoc("log_" + d);
     const due = all("invoice").filter(i => i.status === "sent" && i.due === d);
-    return `<button class="d ${d.slice(0, 7) !== UI.calMonth ? "out" : ""} ${d === t ? "today" : ""} ${d === sel ? "sel" : ""}" data-act="calsel" data-date="${d}" aria-label="${dLong(d)}"><span class="dn">${parseD(d).getDate()}</span>${evs.slice(0, 3).map(e => `<span class="ev t-${e.type || "work"}">${e.start ? t12(e.start) + " " : ""}${esc(e.title || getDoc(e.jobId)?.title || "")}</span>`).join("")}${evs.length > 3 ? `<span class="more">+${evs.length - 3} more</span>` : ""}${due.length ? `<span class="ev t-quote">Invoice due</span>` : ""}${log ? `<span class="logdot">✓ ${fmtH(sum(log.entries || [], entryHours))}</span>` : ""}</button>`;
+    return `<button class="d ${d.slice(0, 7) !== UI.calMonth ? "out" : ""} ${d === t ? "today" : ""} ${d === sel ? "sel" : ""}" data-act="calsel" data-date="${d}" aria-label="${dLong(d)}"><span class="dn">${parseD(d).getDate()}</span>${evs.slice(0, 3).map(e => `<span class="ev t-${e.type || "work"}">${e.start ? t12(e.start) + " " : ""}${esc(e.title || jobLabel(getDoc(e.jobId)) || "")}</span>`).join("")}${evs.length > 3 ? `<span class="more">+${evs.length - 3} more</span>` : ""}${due.length ? `<span class="ev t-quote">Invoice due</span>` : ""}${log ? `<span class="logdot">✓ ${fmtH(sum(log.entries || [], entryHours))}</span>` : ""}</button>`;
   }).join("");
   const evs = eventsOn(sel), log = getDoc("log_" + sel);
   return `<div class="stack">
@@ -1135,7 +1135,7 @@ VIEWS.calendar = () => {
     <div class="row" style="gap:12px">${EV_TYPES.map(([k, l]) => `<span class="row small" style="gap:5px"><span class="pill t-${k}" style="padding:0 6px">&nbsp;</span>${l}</span>`).join("")}</div>
     <div class="card"><div class="head"><h2>${dLong(sel)}</h2><div class="row"><button class="btn sm" data-act="newevent" data-date="${sel}">${ic("plus")} Event</button><button class="btn sm" data-act="opelog" data-date="${sel}">${ic("log")} ${log ? "Day log" : "Write day log"}</button></div></div>
       ${evs.length ? evs.map(e => evRow(e)).join("") : `<div class="muted small">Nothing booked.</div>`}
-      ${log ? `<hr class="sep" style="margin:10px 0"><div class="small"><b>Logged ${fmtH(sum(log.entries || [], entryHours))}</b>${(log.entries || []).map(e => `<div class="muted">${esc(getDoc(e.jobId)?.title || "No job")}: ${t12(e.start)}–${t12(e.finish)} ${e.did ? "· " + esc(e.did) : ""}</div>`).join("")}${(log.extras || []).length ? `<div style="margin-top:4px"><b>Extras:</b> ${(log.extras || []).map(x => esc(x.text)).join("; ")}</div>` : ""}</div>` : ""}
+      ${log ? `<hr class="sep" style="margin:10px 0"><div class="small"><b>Logged ${fmtH(sum(log.entries || [], entryHours))}</b>${(log.entries || []).map(e => `<div class="muted">${esc(jobLabel(getDoc(e.jobId)) || "No job")}: ${t12(e.start)}–${t12(e.finish)} ${e.did ? "· " + esc(e.did) : ""}</div>`).join("")}${(log.extras || []).length ? `<div style="margin-top:4px"><b>Extras:</b> ${(log.extras || []).map(x => esc(x.text)).join("; ")}</div>` : ""}</div>` : ""}
     </div></div>`;
 };
 
@@ -1443,17 +1443,19 @@ const ACT = {
   setstatus: d => { const j = getDoc(d.id); j.status = d.s; if (d.s === "quoted" && !j.quoteDate) j.quoteDate = today(); put(touch(j)); toast("Marked " + statusName(d.s).toLowerCase()); render(); },
   async newjob(d){
     const clients = all("client").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    const ok = await openModal(`<h2>New job</h2>
-      <label class="field"><span>What's the job?</span><input type="text" id="m_title" placeholder="e.g. Back deck rebuild"></label>
+    const no = "#" + String(num(S().nextQuote) || 1).padStart(4, "0");
+    const ok = await openModal(`<h2>New job ${no}</h2>
+      <label class="field"><span>Job name</span><input type="text" id="m_title" placeholder="e.g. Back deck rebuild"><span class="tiny muted" style="font-weight:400">Short name you'll see in lists, like <b>${no} - Back deck rebuild</b></span></label>
+      <label class="field"><span>What needs doing (optional)</span><textarea id="m_scope" rows="2" placeholder="Describe the job. This goes at the top of the quote and you can change it later."></textarea></label>
       <label class="field"><span>Client</span><select id="m_client" data-ch="newjobcli"><option value="__new">New client…</option>${clients.map(c => `<option value="${c.id}" ${d.client === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
       <div id="m_newcli" class="fields" ${d.client ? "hidden" : ""}><label class="field"><span>Client name</span><input type="text" id="m_cname"></label><label class="field"><span>Phone</span><input type="tel" id="m_cphone"></label><label class="field"><span>Email</span><input type="email" id="m_cemail"></label></div>
       <label class="field"><span>Site address</span><input type="text" id="m_site" data-sug="addr" autocomplete="off" placeholder="Street, suburb"></label>
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Create job</button></div>`,
-      () => { if (!mval("m_title").trim()) { toast("Give the job a name first."); return false; } return {title:mval("m_title").trim(), client:mval("m_client"), cname:mval("m_cname"), cphone:mval("m_cphone"), cemail:mval("m_cemail"), site:mval("m_site")}; });
+      () => { if (!mval("m_title").trim()) { toast("Give the job a short name first."); return false; } return {title:mval("m_title").trim(), client:mval("m_client"), cname:mval("m_cname"), cphone:mval("m_cphone"), cemail:mval("m_cemail"), site:mval("m_site"), scope:mval("m_scope").trim()}; });
     if (!ok) return;
     let cid = ok.client;
     if (cid === "__new") cid = ok.cname.trim() ? newClient({name:ok.cname.trim(), phone:ok.cphone, email:ok.cemail, address:ok.site}).id : "";
-    const j = newJob({title:ok.title, clientId:cid, site:ok.site || (cid && ok.client !== "__new" ? getDoc(cid)?.address || "" : ""), quoteNo:nextNo("q"), sections:[{id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}]});
+    const j = newJob({title:ok.title, scope:ok.scope, clientId:cid, site:ok.site || (cid && ok.client !== "__new" ? getDoc(cid)?.address || "" : ""), quoteNo:nextNo("q"), sections:[{id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}]});
     go("job", j.id, "visit");
   },
   async newclient(d){
