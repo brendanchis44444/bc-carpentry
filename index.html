@@ -835,11 +835,13 @@ VIEWS.home = () => {
   const open = log ? (log.entries || []).find(e => e.start && !e.finish) : null;
   const renew = (s.renewals || []).filter(r => r.date && daysBetween(t, r.date) <= 30).sort((a, b) => a.date.localeCompare(b.date));
   const follow = waiting.filter(j => j.quoteDate && daysBetween(j.quoteDate, t) >= 7);
+  const tlGap = s.tlLast ? daysBetween(s.tlLast, t) : -1, tlDue = jobs.length && (lsGet("bcj_tlsnooze") || "") <= t && (tlGap < 0 || tlGap >= 7);
   return `<div class="stack">
   ${isEmpty ? `<div class="welcome"><h1>G'day${s.name ? " " + esc(s.name.split(" ")[0]) : ""}. Let's get your jobs in.</h1><p>${IS_PWA ? "Everything saves on this device first and syncs to your other devices through your Google account once you sign in under Settings." : "Everything here saves to your account, so it's the same on your phone and your PC."} Add your business details and logo under Settings so they show on your quotes and invoices.</p><div class="row"><button class="btn light" data-act="newjob">Start a new job</button><button class="btn clear" data-act="nav" data-v="settings">Settings</button></div></div>` : ""}
   <div class="row between"><div><div class="label">${DOW[d.getDay()]}</div><h1>${d.getDate()} ${MON[d.getMonth()]}</h1></div>
     <div class="row"><button class="btn" data-act="newexp" data-date="${t}">${ic("plus")} Add expense</button><button class="btn" data-act="newevent" data-date="${t}">${ic("cal")} Add to calendar</button>${open ? `<button class="btn accent" data-act="clockoff">Clock off <span class="small" style="opacity:.85">(on since ${t12(open.start)})</span></button>` : `<button class="btn primary" data-act="clockon">Clock on</button>`}<button class="btn" data-act="logstop">Log drive to here</button></div></div>
   ${renew.map(r => { const n = daysBetween(t, r.date); return `<div class="note" ${n < 0 ? 'style="border-color:var(--bad);background:var(--bad-soft)"' : ""}><b>${esc(r.name)}</b> ${n < 0 ? `expired on ${dAU(r.date)}` : n === 0 ? "expires today" : `expires in ${n} day${n === 1 ? "" : "s"} (${dAU(r.date)})`}. <a href="#" data-act="nav" data-v="settings">Update the date</a> once it's renewed.</div>`; }).join("")}
+  ${tlDue ? `<div class="note">${tlGap < 0 ? "Bring in your Google Timeline and the app fills your driving log and time on site for you." : `It's been ${tlGap} days since you brought in your Google Timeline.`} <a href="#" data-act="tlopen">Do it now</a> · <a href="#" data-act="tlsnooze">Later</a></div>` : ""}
   <div class="tiles">
     <div class="tile ${overdue.length ? "accent" : ""}" data-act="money" data-tab="invoices"><div class="stat"><span class="k">Owed to you</span><span class="v">${fmtMoney(owed)}</span><span class="sub">${unpaid.length} unpaid${overdue.length ? `, ${overdue.length} overdue` : ""}</span></div></div>
     <div class="tile" data-act="nav" data-v="log"><div class="stat"><span class="k">Hours this week</span><span class="v">${fmtH(wkHours)}</span><span class="sub">Since ${dShort(wk0)}</span></div></div>
@@ -1330,8 +1332,16 @@ function tlMonth(month){
       else if (prev && prev.work && prev.stop < 15 && prev.B.kind === "other" && x.A.key === prev.B.key) Object.assign(x, {work:true, why:prev.why, jobId:prev.jobId, via:true});
     });
     D.typedKm = !trips.length && num(l && l.km) > 0 ? num(l.km) : 0;
-    D.manual = trips.some(t => !t.tl) || D.typedKm > 0;
-    D.drives.forEach(x => { x.added = trips.some(t => t.tl === x.key); x.def = x.work && !D.manual; });
+    // a drive the app logged when you clocked on or tapped Log drive to here gets swapped for Timeline's version,
+    // which knows where you really came from (via Bunnings, say) and the km you actually drove
+    const autoT = trips.filter(t => t.auto && t.time), used = new Set();
+    const sameSpot = (addr, P) => { if (!(addr || "").trim()) return false; if (normAddr(addr) === normAddr(tlRec(P))) return true; const c = geoCache()[normAddr(addr)]; return !!(c && P.ll && kmBetween([c[1], c[0]], P.ll) <= 0.3); };
+    D.manual = trips.some(t => !t.tl && !t.auto) || D.typedKm > 0;
+    D.drives.forEach(x => {
+      x.added = trips.some(t => t.tl === x.key);
+      if (!x.added) { const end = x.e.getHours() * 60 + x.e.getMinutes(); const t = autoT.find(t => !used.has(t.id) && sameSpot(t.to, x.B) && Math.abs(mins(t.time) - end) <= 90); if (t) { used.add(t.id); x.repl = t; } }
+      x.def = x.work && !D.manual || !!x.repl;
+    });
     sites.forEach(x => {
       x.start = hmR(x.s); x.finish = hmR(x.e); const j = getDoc(x.jobId);
       x.ent = ents.find(e => e.jobId === x.jobId); x.quote = tlQuoteish(j, D.date);
@@ -1393,7 +1403,7 @@ VIEWS.timeline = () => {
   const driveRow = x => {
     const p = tlPick(x), txt = `${esc(tlShow(x.A))} to ${esc(tlShow(x.B))}`, sub = `${t12(hmR(x.s))} · ${x.km} km`;
     if (x.added) return `<div class="tlrow"><span class="pill paid">Added</span><span class="small grow">${txt}<span class="tiny muted" style="display:block">${sub}</span></span></div>`;
-    return `<div class="tlrow ${p.on ? "on" : ""}"><label class="check"><input type="checkbox" data-ch="tl" data-key="${x.key}" ${p.on ? "checked" : ""}><span class="grow"><b class="small">${txt}</b><span class="tiny muted" style="display:block">${sub}${x.via ? " · quick stop on a work trip" : ""}</span></span></label>${route(x) ? `<a class="tiny" href="${route(x)}" target="_blank" rel="noopener">Map</a>` : ""}</div>
+    return `<div class="tlrow ${p.on ? "on" : ""}"><label class="check"><input type="checkbox" data-ch="tl" data-key="${x.key}" ${p.on ? "checked" : ""}><span class="grow"><b class="small">${txt}</b><span class="tiny muted" style="display:block">${sub}${x.via ? " · quick stop on a work trip" : ""}${x.repl ? ` · replaces the drive logged at ${t12(x.repl.time)}${num(x.repl.km) ? ` (${num(x.repl.km)} km from ${esc(placeName(x.repl.from))})` : ""}` : ""}</span></span></label>${route(x) ? `<a class="tiny" href="${route(x)}" target="_blank" rel="noopener">Map</a>` : ""}</div>
       ${p.on ? `<div class="fields tlf"><label class="field"><span>Reason</span><input type="text" list="dl_why" id="tlw_${x.key}" data-ch="tlf" data-key="${x.key}" data-f="why" value="${esc(p.why)}" placeholder="e.g. Getting prices on materials"></label><label class="field"><span>Job</span><select data-ch="tlf" data-key="${x.key}" data-f="jobId">${jobOptions(p.jobId, "General business (no job)")}</select></label></div>` : ""}`;
   };
   const siteRow = x => {
@@ -1699,6 +1709,7 @@ function blankEntry(jobId){ const j = getDoc(jobId); const last = all("log").sor
 const ACT = {
   nav: d => nav(d.v), back: () => back(), go: d => go(d.v, d.id),
   tlopen: () => go("timeline"),
+  tlsnooze: () => { lsSet("bcj_tlsnooze", addDays(today(), 3)); render(); },
   tlfile: () => { const fp = $("#tlpick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) tlLoad(fs); }; fp.click(); },
   tlmonth: d => { TL.month = d.m; render(); window.scrollTo(0, 0); tlNames(); },
   tlapply: () => {
@@ -1713,9 +1724,15 @@ const ACT = {
         if (!e) { e = {id:uid("e"), jobId, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
         Object.assign(e, {jobId, site:e.site || (j && j.site) || x.site, start:x.start, finish:x.finish, breakMin:(x.e - x.s) >= 5 * 3600e3 ? (S().breakMin ?? 45) : 0, tl:true}); nS++;
       });
-      drives.forEach(x => { const p = tlPick(x); l.trips.push({id:uid("tr"), from:tlRec(x.A), to:tlRec(x.B), why:p.why, jobId:p.jobId, km:x.km, back:false, tl:x.key, time:hmR(x.s)}); nT++; km += x.km; });
+      drives.forEach(x => {
+        const p = tlPick(x), rec = {from:tlRec(x.A), to:tlRec(x.B), why:p.why, jobId:p.jobId, km:x.km, back:false, tl:x.key, time:hmR(x.s), auto:false, kmAuto:false};
+        const old = x.repl && l.trips.find(t => t.id === x.repl.id);
+        if (old) Object.assign(old, rec); else l.trips.push({id:uid("tr"), ...rec}); nT++; km += x.km;
+      });
+      if (l.trips.every(t => t.time)) l.trips.sort((a, b) => a.time.localeCompare(b.time));
       put(touch(l));
     });
+    const st = S(); st.tlLast = today(); put(st);
     render(); toast(`Added ${[nT ? `${nT} trip${nT === 1 ? "" : "s"} (${round2(km)} km)` : "", nS ? `${nS} site time${nS === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ")} to your day logs.`);
   },
   money: d => { UI.moneyTab = d.tab; nav("money"); },
