@@ -1362,7 +1362,7 @@ VIEWS.settings = () => {
     <div class="card"><h2>Bank details for invoices</h2><div class="fields">${f("bankName","Account name")}${f("bsb","BSB","text",'inputmode="numeric"')}${f("acct","Account number","text",'inputmode="numeric"')}</div><p class="small muted">${IS_PWA ? "Saved in your own Google account" : "Saved to your claude.ai account"} and only printed on invoices you make.</p></div>
     <div class="card"><h2>Pricing defaults</h2><div class="fields">${f("rate","Hourly rate ($)","number")}${f("markup","Materials markup (%)","number")}${f("contingency","Contingency (%)","number")}${f("validDays","Quotes valid for (days)","number")}${f("payDays","Invoices due after (days)","number")}${f("breakMin","Usual breaks per day (min)","number")}</div></div>
     <div class="card"><h2>Wording</h2><label class="field"><span>Quote terms</span><textarea ${K("quoteTerms")} style="min-height:110px">${esc(s.quoteTerms)}</textarea></label><label class="field" style="margin-top:10px"><span>Invoice note</span><textarea ${K("invTerms")}>${esc(s.invTerms)}</textarea></label>
-      <div class="fields" style="margin-top:10px">${f("nextQuote","Next quote number","number")}${f("nextInv","Next invoice number","number")}</div></div>
+      <div class="fields" style="margin-top:10px">${f("nextQuote","Next quote number","number")}${f("nextInv","Next invoice number","number")}</div>${peekNo("q") !== (num(s.nextQuote) || 1) ? `<p class="tiny muted" style="margin:6px 0 0">#${String(num(s.nextQuote) || 1).padStart(4, "0")} is already used, so the next new job will be #${String(peekNo("q")).padStart(4, "0")}.</p>` : ""}</div>
     <div class="card"><div class="head"><h2>My materials prices</h2><button class="btn sm" data-act="addpl">${ic("plus")} Add item</button></div>
       <p class="small muted" style="margin-top:0">What you actually pay, including any trade discount. Scanned receipts add to this list automatically, and when you type a material on a job that matches, its price fills in. Use <b>Bunnings</b> to check the current shelf price.</p>
       ${bunningsBox()}
@@ -1396,7 +1396,23 @@ const INSTALL = { ev:null };
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); INSTALL.ev = e; if (UI.view === "settings" || UI.view === "home") render(); });
 window.addEventListener("appinstalled", () => { INSTALL.ev = null; toast("Installed. Open it from your home screen."); });
 /* ---------- actions ---------- */
-function nextNo(kind){ const s = S(); const k = kind === "q" ? "nextQuote" : "nextInv"; const n = num(s[k]) || 1; s[k] = n + 1; put(s); return (kind === "q" ? "Q-" : "INV-") + String(n).padStart(4, "0"); }
+const NOK = {q:["job", "quoteNo", "nextQuote", "Q-"], i:["invoice", "number", "nextInv", "INV-"]};
+const noOf = v => num(String(v || "").replace(/\D+/g, ""));
+const usedNos = kind => new Set(all(NOK[kind][0]).map(d => noOf(d[NOK[kind][1]])).filter(n => n > 0));
+/* next free number: the Settings counter, skipping any number a job or invoice already has */
+function peekNo(kind){ const used = usedNos(kind); let n = Math.max(num(S()[NOK[kind][2]]) || 1, 1); while (used.has(n)) n++; return n; }
+function nextNo(kind){ const s = S(); const n = peekNo(kind); s[NOK[kind][2]] = n + 1; put(s); return NOK[kind][3] + String(n).padStart(4, "0"); }
+/* after a restore: give restored jobs that clash with a different job here a fresh number, and move both counters past the highest number in use */
+function fixNosAfterRestore(restored){
+  const ids = new Set(restored.filter(d => d.kind === "job").map(d => d.id));
+  const keep = new Set(all("job").filter(j => !ids.has(j.id)).map(j => noOf(j.quoteNo)).filter(n => n > 0));
+  const moved = [];
+  restored.filter(d => d.kind === "job" && keep.has(noOf(d.quoteNo))).forEach(d => { const j = getDoc(d.id); if (!j) return; const old = jobNo(j); j.quoteNo = "Q-" + String(Math.max(...usedNos("q")) + 1).padStart(4, "0"); put(touch(j)); moved.push(old + " to " + jobNo(j)); });
+  const s = S(); let ch = false;
+  for (const k of ["q", "i"]) { const top = Math.max(0, ...usedNos(k)); if ((num(s[NOK[k][2]]) || 1) <= top) { s[NOK[k][2]] = top + 1; ch = true; } }
+  if (ch) put(s);
+  return moved;
+}
 function touch(d){ d.updated = new Date().toISOString(); return d; }
 function newJob(fields){ const s = S(); const j = touch({id:uid("job"), kind:"job", title:"", status:"lead", created:new Date().toISOString(), sections:[], rate:s.rate, markup:s.markup, contingency:s.contingency, ...fields}); put(j); return j; }
 function newClient(fields){ const c = {id:uid("cli"), kind:"client", name:"", phone:"", email:"", address:"", ...fields}; put(c); return c; }
@@ -1443,7 +1459,7 @@ const ACT = {
   setstatus: d => { const j = getDoc(d.id); j.status = d.s; if (d.s === "quoted" && !j.quoteDate) j.quoteDate = today(); put(touch(j)); toast("Marked " + statusName(d.s).toLowerCase()); render(); },
   async newjob(d){
     const clients = all("client").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    const no = "#" + String(num(S().nextQuote) || 1).padStart(4, "0");
+    const no = "#" + String(peekNo("q")).padStart(4, "0");
     const ok = await openModal(`<h2>New job ${no}</h2>
       <label class="field"><span>Job name</span><input type="text" id="m_title" placeholder="e.g. Back deck rebuild"><span class="tiny muted" style="font-weight:400">Short name you'll see in lists, like <b>${no} - Back deck rebuild</b></span></label>
       <label class="field"><span>What needs doing (optional)</span><textarea id="m_scope" rows="2" placeholder="Describe the job. This goes at the top of the quote and you can change it later."></textarea></label>
@@ -1579,7 +1595,7 @@ ${s.phone}`); },
   rmlogo: () => { const s = S(); if (s.logoImg) imgDel(s.logoImg); s.logoImg = ""; put(s); render(); },
   taxpack: () => exportTaxPack(),
   backup: async () => { toast("Gathering photos…"); const imgs = {}; for (const id of allImgIds()) { const d = await imgGet(id); if (d) imgs[id] = d; } const data = JSON.stringify({app:"bc-carpentry-jobs", v:2, saved:new Date().toISOString(), docs:Store.docs, imgs}); await saveFile(`BC Carpentry backup ${today()}.json`, data); },
-  restore: () => { const fp = $("#jsonpick"); fp.value = ""; fp.onchange = async () => { const f = fp.files[0]; if (!f) return; try { const o = JSON.parse(await f.text()); if (!o.docs) throw 0; const n = Object.keys(o.docs).length; if (await confirmBox("Restore backup?", `This adds or replaces ${n} records from ${f.name}. Records not in the file are kept.`, "Restore")) { Object.values(o.docs).forEach(doc => put(doc)); for (const [id, d] of Object.entries(o.imgs || {})) await imgPut(d, id); render(); toast("Backup restored"); } } catch(e){ toast("That file isn't a backup from this app."); } }; fp.click(); },
+  restore: () => { const fp = $("#jsonpick"); fp.value = ""; fp.onchange = async () => { const f = fp.files[0]; if (!f) return; try { const o = JSON.parse(await f.text()); if (!o.docs) throw 0; const n = Object.keys(o.docs).length; if (await confirmBox("Restore backup?", `This adds or replaces ${n} records from ${f.name}. Records not in the file are kept.`, "Restore")) { Object.values(o.docs).forEach(doc => put(doc)); for (const [id, d] of Object.entries(o.imgs || {})) await imgPut(d, id); const moved = fixNosAfterRestore(Object.values(o.docs)); render(); toast("Backup restored"); if (moved.length) await openModal(`<h2>Some job numbers changed</h2><p class="muted" style="margin:0">These job numbers were already used by other jobs on here, so the restored jobs got new ones: ${esc(moved.join(", "))}.</p><div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="modal-yes">OK</button></div>`); } } catch(e){ toast("That file isn't a backup from this app."); } }; fp.click(); },
 };
 function addLogLines(inv, d1, d2, jobId){
   const jobs = all("job").filter(j => jobId ? j.id === jobId : j.clientId === inv.clientId).map(j => j.id);
