@@ -315,8 +315,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 .thumbs .th.pick{cursor:pointer;opacity:.55}
 .thumbs .th.pick.on{opacity:1;box-shadow:0 0 0 2px var(--brand-ink)}
 .thumbs .th.pick input{position:absolute;top:6px;right:6px;width:20px;height:20px;accent-color:var(--brand)}
-.sugbox{position:fixed;z-index:70;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);overflow:hidden;display:flex;flex-direction:column}
-.sugbox button{border:0;background:none;text-align:left;padding:9px 12px;cursor:pointer;display:flex;flex-direction:column;gap:1px;border-top:1px solid var(--line);color:var(--ink);font:inherit}
+.sugbox{position:fixed;z-index:70;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column}
+.sugbox button{flex:none;border:0;background:none;text-align:left;padding:9px 12px;cursor:pointer;display:flex;flex-direction:column;gap:1px;border-top:1px solid var(--line);color:var(--ink);font:inherit}
 .sugbox button:first-child{border-top:0}
 .sugbox button:hover,.sugbox button.on{background:var(--surface2)}
 .sugbox b{font-weight:600;font-size:.95rem}
@@ -903,13 +903,16 @@ const CHANGE = {
   tlf(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {})[el.dataset.f] = el.value; }
 };
 document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.ch === "tlf") CHANGE.tlf(el); });
+document.addEventListener("input", e => { if (e.target.id === "clisearch") { UI.cliSearch = e.target.value; clearTimeout(UI._cs); UI._cs = setTimeout(render, 200); } });
 document.addEventListener("input", e => { if (e.target.id === "jobsearch") { UI.jobSearch = e.target.value; clearTimeout(UI._st); UI._st = setTimeout(render, 250); } });
 
 /* clients */
 VIEWS.clients = () => {
-  const cs = all("client").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const q = (UI.cliSearch || "").trim().toLowerCase(), dq = q.replace(/\D/g, "");
+  const cs = all("client").filter(c => !q || [c.name, c.email, c.address].join(" ").toLowerCase().includes(q) || dq.length >= 3 && String(c.phone || "").replace(/\D/g, "").includes(dq)).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   return `<div class="stack"><div class="row between"><p class="muted" style="margin:0">Everyone you've quoted or invoiced. Builders you do labour hire for go here too.</p><button class="btn primary" data-act="newclient">${ic("plus")} New client</button></div>
-  <div class="card" style="padding:4px 12px"><div class="list">${cs.length ? cs.map(c => { const n = all("job").filter(j => j.clientId === c.id).length; return `<div class="item" data-act="openclient" data-id="${c.id}"><div class="main"><div class="t">${esc(c.name || "No name")}</div><div class="s">${esc([c.phone, c.email, c.address].filter(Boolean).join(" · "))}</div></div><div class="r small muted">${n} job${n === 1 ? "" : "s"}</div></div>`; }).join("") : `<div class="empty">No clients yet.</div>`}</div></div></div>`;
+  ${all("client").length > 6 ? `<input type="text" id="clisearch" placeholder="Search by name, phone or street" value="${esc(UI.cliSearch || "")}" style="max-width:420px">` : ""}
+  <div class="card" style="padding:4px 12px"><div class="list">${cs.length ? cs.map(c => { const n = all("job").filter(j => j.clientId === c.id).length; return `<div class="item" data-act="openclient" data-id="${c.id}"><div class="main"><div class="t">${esc(c.name || "No name")}</div><div class="s">${esc([c.phone, c.email, c.address].filter(Boolean).join(" · "))}</div></div><div class="r small muted">${n} job${n === 1 ? "" : "s"}</div></div>`; }).join("") : `<div class="empty">${q ? "No clients match that search." : "No clients yet."}</div>`}</div></div></div>`;
 };
 VIEWS.client = () => {
   const c = getDoc(UI.id); if (!c) return `<div class="empty">Client not found.</div>`;
@@ -1048,7 +1051,7 @@ function jobDetails(j){
     <div class="card"><div class="fields">
       <label class="field"><span>Job name</span><input type="text" ${K("title")} value="${esc(j.title)}"></label>
       <label class="field"><span>Site address</span><input type="text" data-sug="addr" autocomplete="off" ${K("site")} value="${esc(j.site)}"></label>
-      <label class="field"><span>Client</span><select ${K("clientId")}><option value="">Choose a client</option>${clients.map(x => `<option value="${x.id}" ${x.id === j.clientId ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Client</span>${clientPicker({bind:`${j.id}|clientId`, value:j.clientId})}</label>
       <label class="field"><span>Planned start</span><input type="date" ${K("start")} value="${esc(j.start)}"></label>
     </div>
     ${c ? `<div class="small muted" style="margin-top:8px">${esc([c.phone, c.email].filter(Boolean).join(" · "))} <button class="btn ghost sm" data-act="openclient" data-id="${c.id}">Edit client</button></div>` : `<button class="btn ghost sm" data-act="newclient" data-job="${j.id}" style="margin-top:6px">${ic("plus")} New client</button>`}
@@ -1619,7 +1622,7 @@ VIEWS.invoice = () => {
     ${i.status === "paid" ? (() => { const F = fySummary(fyStart(i.paidDate || today())); const amt = num(i.paidAmount ?? invTotal(i)); return `<div class="note info">Paid ${dAU(i.paidDate)}. Put about <b>${money2(amt * F.marginal)}</b> aside for tax${num(S().superPct) ? ` and <b>${money2(amt * num(S().superPct) / 100)}</b> for super` : ""} from this one.</div>`; })() : ""}
     <div class="card"><div class="fields">
       <label class="field"><span>Invoice number</span><input type="text" ${K("number")} value="${esc(i.number)}"></label>
-      <label class="field"><span>Bill to</span><select ${K("clientId")}><option value="">Choose a client</option>${clients.map(c => `<option value="${c.id}" ${c.id === i.clientId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Bill to</span>${clientPicker({bind:`${i.id}|clientId`, value:i.clientId})}</label>
       <label class="field"><span>Date</span><input type="date" ${K("date")} value="${esc(i.date)}"></label>
       <label class="field"><span>Due</span><input type="date" ${K("due")} value="${esc(i.due)}"></label>
       ${i.status === "paid" ? `<label class="field"><span>Paid on</span><input type="date" ${K("paidDate")} value="${esc(i.paidDate)}"></label><label class="field"><span>Amount received</span><input type="number" step="any" ${K("paidAmount")} value="${i.paidAmount ?? invTotal(i)}"></label>` : ""}
@@ -1777,15 +1780,15 @@ const ACT = {
     const ok = await openModal(`<h2>New job ${no}</h2>
       <label class="field"><span>Job name</span><input type="text" id="m_title" placeholder="e.g. Back deck rebuild"><span class="tiny muted" style="font-weight:400">Short name you'll see in lists, like <b>${no} - Back deck rebuild</b></span></label>
       <label class="field"><span>What needs doing (optional)</span><textarea id="m_scope" rows="2" placeholder="Describe the job. This goes at the top of the quote and you can change it later."></textarea></label>
-      <label class="field"><span>Client</span><select id="m_client" data-ch="newjobcli"><option value="__new">New client…</option>${clients.map(c => `<option value="${c.id}" ${d.client === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
-      <div id="m_newcli" class="fields" ${d.client ? "hidden" : ""}><label class="field"><span>Client name</span><input type="text" id="m_cname"></label><label class="field"><span>Phone</span><input type="tel" id="m_cphone"></label><label class="field"><span>Email</span><input type="email" id="m_cemail"></label></div>
+      <label class="field"><span>Client</span>${clientPicker({id:"m_client", value:d.client, ch:"newjobcli"})}<span class="tiny muted" style="font-weight:400">Start typing to find them. A name that isn't on your list adds a new client.</span></label>
+      <div id="m_newcli" class="fields" ${d.client ? "hidden" : ""}><label class="field"><span>New client's phone</span><input type="tel" id="m_cphone"></label><label class="field"><span>New client's email</span><input type="email" id="m_cemail"></label></div>
       <label class="field"><span>Site address</span><input type="text" id="m_site" data-sug="addr" autocomplete="off" placeholder="Street, suburb"></label>
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Create job</button></div>`,
-      () => { if (!mval("m_title").trim()) { toast("Give the job a short name first."); return false; } return {title:mval("m_title").trim(), client:mval("m_client"), cname:mval("m_cname"), cphone:mval("m_cphone"), cemail:mval("m_cemail"), site:mval("m_site"), scope:mval("m_scope").trim()}; });
+      () => { if (!mval("m_title").trim()) { toast("Give the job a short name first."); return false; } return {title:mval("m_title").trim(), client:mval("m_client"), cname:mval("m_clientq"), cphone:mval("m_cphone"), cemail:mval("m_cemail"), site:mval("m_site"), scope:mval("m_scope").trim()}; });
     if (!ok) return;
     let cid = ok.client;
-    if (cid === "__new") cid = ok.cname.trim() ? newClient({name:ok.cname.trim(), phone:ok.cphone, email:ok.cemail, address:ok.site}).id : "";
-    const j = newJob({title:ok.title, scope:ok.scope, clientId:cid, site:ok.site || (cid && ok.client !== "__new" ? getDoc(cid)?.address || "" : ""), quoteNo:nextNo("q"), sections:[{id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}]});
+    if (cid === "__new" || !getDoc(cid)) { const name = ok.cname.trim(), same = name && all("client").find(c => (c.name || "").trim().toLowerCase() === name.toLowerCase()); cid = same ? same.id : name ? newClient({name, phone:ok.cphone, email:ok.cemail, address:ok.site}).id : ""; }
+    const j = newJob({title:ok.title, scope:ok.scope, clientId:cid, site:ok.site || getDoc(cid)?.address || "", quoteNo:nextNo("q"), sections:[{id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}]});
     go("job", j.id, "visit");
   },
   async newclient(d){
@@ -1830,14 +1833,14 @@ const ACT = {
     const j = d.job ? getDoc(d.job) : null;
     const prev = j ? all("invoice").filter(i => i.jobId === j.id) : [];
     const ok = await openModal(`<h2>New invoice</h2>
-      ${j ? `<p class="small muted" style="margin:0">For <b>${esc(jobLabel(j))}</b></p>` : `<label class="field"><span>Bill to</span><select id="m_cli">${clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>`}
+      ${j ? `<p class="small muted" style="margin:0">For <b>${esc(jobLabel(j))}</b></p>` : `<label class="field"><span>Bill to</span>${clientPicker({id:"m_cli"})}</label>`}
       <label class="field"><span>Start from</span><select id="m_from">
         ${j ? `<option value="quote">${prev.length ? "Final invoice: quote + extras, less what's been invoiced" : "The full quote + any extras"}</option><option value="deposit">A deposit on the quote</option>` : ""}
         <option value="days">Days from my day logs (not yet billed)</option><option value="blank">Blank invoice</option></select></label>
       <div class="fields"><label class="field"><span>From date</span><input type="date" id="m_d1" value="${addDays(today(), -14)}"></label><label class="field"><span>To date</span><input type="date" id="m_d2" value="${today()}"></label><label class="field"><span>Deposit %</span><input type="number" id="m_dep" value="${S().deposit || 30}"></label></div>
       <p class="small muted" style="margin:0">Dates are used for day logs. Deposit % is used for deposits.</p>
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Create</button></div>`,
-      () => ({cli:j ? j.clientId : mval("m_cli"), from:mval("m_from"), d1:mval("m_d1"), d2:mval("m_d2"), dep:num(mval("m_dep"))}));
+      () => ({cli:j ? j.clientId : clientFromBox("m_cli"), from:mval("m_from"), d1:mval("m_d1"), d2:mval("m_d2"), dep:num(mval("m_dep"))}));
     if (!ok) return;
     const s = S(); const inv = {id:uid("inv"), kind:"invoice", number:nextNo("i"), date:today(), due:addDays(today(), num(s.payDays) || 7), clientId:ok.cli || "", jobId:j ? j.id : "", status:"draft", mode:"items", lines:[], ref:j ? j.title + (j.site ? ", " + j.site : "") : ""};
     if (ok.from === "quote" && j) {
@@ -2134,7 +2137,48 @@ async function drivingKm(from, to){
 const gmapsDir = (from, to) => `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from || "")}&destination=${encodeURIComponent(to || "")}&travelmode=driving`;
 const SUG = { el:null, box:null, items:[], idx:-1, seq:0, t:0, mute:false };
 function pastAddresses(){ const set = new Set(); all("client").forEach(c => c.address && set.add(c.address)); all("job").forEach(j => j.site && set.add(j.site)); all("log").forEach(l => (l.entries || []).forEach(e => e.site && set.add(e.site))); all("event").forEach(e => e.where && set.add(e.where)); set.delete("Various"); return [...set]; }
+/* client picker: type part of a name, phone number or street to find a client, so a long client list stays quick */
+function clientPicker({id, bind, value, ch, placeholder}){
+  const c = getDoc(value);
+  return `<input type="text" ${id ? `id="${id}q"` : ""} data-sug="client" ${bind ? `data-cbind="${bind}"` : ""} autocomplete="off" value="${esc(c ? c.name || "" : "")}" placeholder="${esc(placeholder || "Search your clients, or type a new name")}">${id ? `<input type="hidden" id="${id}" ${ch ? `data-ch="${ch}"` : ""} value="${esc(c ? c.id : "__new")}">` : ""}`;
+}
+function clientSugs(el){
+  const v = el.value.trim(), q = v.toLowerCase(), dq = v.replace(/\D/g, ""), rec = {};
+  const bump = (id, d) => { if (id && d && (!rec[id] || d > rec[id])) rec[id] = d; };
+  all("job").forEach(j => bump(j.clientId, j.updated || j.created || "")); all("invoice").forEach(i => bump(i.clientId, i.date || ""));
+  const cur = el.dataset.cbind ? (getDoc(el.dataset.cbind.split("|")[0]) || {})[el.dataset.cbind.split("|")[1]] : "";
+  let cs = all("client");
+  // a field still showing the chosen client lists everyone (recent first), so it's easy to swap
+  const showAll = !q || (getDoc(cur) || {}).name === v;
+  if (!showAll) cs = cs.filter(c => [c.name, c.email, c.address].join(" ").toLowerCase().includes(q) || dq.length >= 3 && String(c.phone || "").replace(/\D/g, "").includes(dq));
+  const starts = c => (c.name || "").toLowerCase().startsWith(q) ? 1 : 0;
+  cs.sort((a, b) => (showAll ? 0 : starts(b) - starts(a)) || (rec[b.id] || "").localeCompare(rec[a.id] || "") || (a.name || "").localeCompare(b.name || ""));
+  const out = cs.slice(0, 8).map(c => ({label:c.name || "No name", sub:[c.phone, shortAddr(c.address)].filter(Boolean).join(" · ") || "Client", kind:"client", id:c.id, value:c.name || ""}));
+  if (v && !showAll && !all("client").some(c => (c.name || "").trim().toLowerCase() === q)) out.push({label:`Add "${v}" as a new client`, sub:"New client", kind:"client", id:"__new", value:v});
+  return out;
+}
+function pickClient(el, id){
+  const bind = el.dataset.cbind;
+  if (bind) {
+    const [docId, path] = bind.split("|"), doc = getDoc(docId); if (!doc) return;
+    if (id === "__new") { const c = newClient({name:el.value.trim()}); id = c.id; toast(`Added ${c.name} as a new client.`); }
+    setPath(doc, path, id); put(touch(doc)); el.blur(); setTimeout(render, 0); return;
+  }
+  const hid = el.id && document.getElementById(el.id.replace(/q$/, "")); if (!hid) return;
+  hid.value = id; if (hid.dataset.ch && CHANGE[hid.dataset.ch]) CHANGE[hid.dataset.ch](hid);
+}
+/* the new name typed into a pop-up's client box: an existing client with that exact name, or a new one */
+function clientFromBox(id, extra){
+  const hid = mval(id), name = mval(id + "q").trim();
+  if (hid && hid !== "__new" && getDoc(hid)) return hid;
+  if (!name) return "";
+  const same = all("client").find(c => (c.name || "").trim().toLowerCase() === name.toLowerCase()); if (same) return same.id;
+  return newClient({name, ...(extra || {})}).id;
+}
+document.addEventListener("focusin", e => { const el = e.target; if (el.dataset && el.dataset.sug === "client") sugShow(el); });
+document.addEventListener("input", e => { const el = e.target; if (!el.dataset || el.dataset.sug !== "client" || el.dataset.cbind || !el.id) return; const hid = document.getElementById(el.id.replace(/q$/, "")); if (hid && hid.value !== "__new") { hid.value = "__new"; if (hid.dataset.ch && CHANGE[hid.dataset.ch]) CHANGE[hid.dataset.ch](hid); } });
 function sugFor(el){
+  if (el.dataset.sug === "client") return clientSugs(el);
   const v = el.value, q = v.trim().toLowerCase(); if (q.length < 2) return [];
   if (el.dataset.sug === "mat") {
     return (S().pricelist || []).filter(x => x.name && normName(x.name).includes(normName(q))).slice(0, 6).map(x => ({label:x.name, sub:`${money2(x.price)} ${x.unit && x.unit !== "each" ? "/" + x.unit : "each"} · ${x.supplier || ""}${x.updated ? " · " + dAU(x.updated) : ""}`, kind:"mat", item:x}));
@@ -2182,6 +2226,7 @@ function sugRemote(el, local){
 }
 function sugPick(i){
   const it = SUG.items[i], el = SUG.el; if (!it || !el) return; sugHide();
+  if (it.kind === "client") { el.value = it.value; pickClient(el, it.id); return; }
   if (it.kind === "mat") {
     const [id, path] = el.dataset.k.split("|"); const doc = getDoc(id); const base = path.replace(/\.text$/, "");
     el.value = it.item.name; setPath(doc, base + ".text", it.item.name); setPath(doc, base + ".cost", num(it.item.price)); setPath(doc, base + ".tbc", false); put(doc); el.blur(); setTimeout(render, 0); return;
