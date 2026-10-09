@@ -838,7 +838,7 @@ VIEWS.home = () => {
   return `<div class="stack">
   ${isEmpty ? `<div class="welcome"><h1>G'day${s.name ? " " + esc(s.name.split(" ")[0]) : ""}. Let's get your jobs in.</h1><p>${IS_PWA ? "Everything saves on this device first and syncs to your other devices through your Google account once you sign in under Settings." : "Everything here saves to your account, so it's the same on your phone and your PC."} Add your business details and logo under Settings so they show on your quotes and invoices.</p><div class="row"><button class="btn light" data-act="newjob">Start a new job</button><button class="btn clear" data-act="nav" data-v="settings">Settings</button></div></div>` : ""}
   <div class="row between"><div><div class="label">${DOW[d.getDay()]}</div><h1>${d.getDate()} ${MON[d.getMonth()]}</h1></div>
-    <div class="row"><button class="btn" data-act="newexp" data-date="${t}">${ic("plus")} Add expense</button><button class="btn" data-act="newevent" data-date="${t}">${ic("cal")} Add to calendar</button>${open ? `<button class="btn accent" data-act="clockoff">Clock off <span class="small" style="opacity:.85">(on since ${t12(open.start)})</span></button>` : `<button class="btn primary" data-act="clockon">Clock on</button>`}</div></div>
+    <div class="row"><button class="btn" data-act="newexp" data-date="${t}">${ic("plus")} Add expense</button><button class="btn" data-act="newevent" data-date="${t}">${ic("cal")} Add to calendar</button>${open ? `<button class="btn accent" data-act="clockoff">Clock off <span class="small" style="opacity:.85">(on since ${t12(open.start)})</span></button>` : `<button class="btn primary" data-act="clockon">Clock on</button>`}<button class="btn" data-act="logstop">Log drive to here</button></div></div>
   ${renew.map(r => { const n = daysBetween(t, r.date); return `<div class="note" ${n < 0 ? 'style="border-color:var(--bad);background:var(--bad-soft)"' : ""}><b>${esc(r.name)}</b> ${n < 0 ? `expired on ${dAU(r.date)}` : n === 0 ? "expires today" : `expires in ${n} day${n === 1 ? "" : "s"} (${dAU(r.date)})`}. <a href="#" data-act="nav" data-v="settings">Update the date</a> once it's renewed.</div>`; }).join("")}
   <div class="tiles">
     <div class="tile ${overdue.length ? "accent" : ""}" data-act="money" data-tab="invoices"><div class="stat"><span class="k">Owed to you</span><span class="v">${fmtMoney(owed)}</span><span class="sub">${unpaid.length} unpaid${overdue.length ? `, ${overdue.length} overdue` : ""}</span></div></div>
@@ -1182,7 +1182,7 @@ VIEWS.log = () => {
 };
 
 /* driving: each work trip with where from, where to, why and the km, which is what the ATO wants to see */
-const TRIP_WHY = ["Travel to site and back","Travel to site","Travel home from site","Getting prices on materials","Picking up materials","Supplier run","Quote visit","Tip run","Bank, post office or accountant","Tool repairs or servicing"];
+const TRIP_WHY = ["Travel to site and back","Travel to site","Travel home from site","Travel home","Getting prices on materials","Picking up materials","Supplier run","Quote visit","Tip run","Bank, post office or accountant","Tool repairs or servicing"];
 const shortAddr = a => String(a || "").split(",")[0];
 function driveCard(log, K, id){
   const s = S(), trips = log.trips || [], total = dayKm(log);
@@ -1197,13 +1197,13 @@ function driveCard(log, K, id){
       <label class="check"><input type="checkbox" ${K(`trips.${i}.back`)} ${t.back ? "checked" : ""}> Return trip</label>
       <span class="grow"></span>
       ${t.from && t.to ? `<button class="btn sm" data-act="calctrip" data-id="${id}" data-i="${i}">Work out km</button><a class="btn sm ghost" href="${gmapsDir(t.from, t.to)}" target="_blank" rel="noopener">Google Maps</a>` : ""}</div>
-    ${num(t.km) ? `<div class="tiny muted">${t.back ? `${num(t.km)} km each way, <b>${round2(num(t.km) * 2)} km</b> in total` : `<b>${num(t.km)} km</b>`}${t.kmAuto ? " (worked out by road)" : t.tl ? ` (Google Timeline${t.time ? ", left " + t12(t.time) : ""})` : ""}</div>` : ""}
+    ${num(t.km) ? `<div class="tiny muted">${t.back ? `${num(t.km)} km each way, <b>${round2(num(t.km) * 2)} km</b> in total` : `<b>${num(t.km)} km</b>`}${t.kmAuto ? " (worked out by road)" : t.tl ? ` (Google Timeline${t.time ? ", left " + t12(t.time) : ""})` : ""}${t.auto && t.time ? ` · logged at ${t12(t.time)}` : ""}</div>` : ""}
   </div>`;
   return `<div class="card"><div class="head"><h2>Driving</h2><span class="hoursbadge">${round2(total)} km</span></div>
     <datalist id="dl_why">${TRIP_WHY.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
     <div class="stack" style="gap:10px">${trips.map(row).join("")}</div>
     ${!trips.length ? `<label class="field" style="max-width:260px"><span>Total km for work today</span><input type="number" inputmode="decimal" step="any" ${K("km")} value="${log.km ?? ""}" placeholder="Or add each trip below"></label>` : ""}
-    <div class="row" style="margin-top:10px">${sites.map(x => `<button class="btn sm" data-act="addtrip" data-id="${id}" data-to="${esc(x)}">${ic("plus")} ${s.home ? "Home to " : ""}${esc(shortAddr(x))}${s.home ? " and back" : ""}</button>`).join("")}<button class="btn sm" data-act="addtrip" data-id="${id}">${ic("plus")} Add a trip</button><button class="btn sm ghost" data-act="tlopen">From Google Timeline</button></div>
+    <div class="row" style="margin-top:10px">${sites.map(x => `<button class="btn sm" data-act="addtrip" data-id="${id}" data-to="${esc(x)}">${ic("plus")} ${s.home ? "Home to " : ""}${esc(shortAddr(x))}${s.home ? " and back" : ""}</button>`).join("")}<button class="btn sm" data-act="addtrip" data-id="${id}">${ic("plus")} Add a trip</button>${log.date === today() ? `<button class="btn sm" data-act="logstop">Log drive to here</button>` : ""}<button class="btn sm ghost" data-act="tlopen">From Google Timeline</button></div>
     <p class="tiny muted" style="margin-bottom:0">For tax time, record each work trip: where from and to, why, and the km. Supplier runs, getting prices and quote visits count too, even when they aren't for one job.${s.home ? "" : ` Add your home or yard address in <a href="#" data-act="nav" data-v="settings">Settings</a> and trips will start from there.`}</p>
   </div>`;
 }
@@ -1438,6 +1438,57 @@ async function tlLoad(files){
   tlPrepare();
 }
 
+/* ---------- drives logged as you go ----------
+   A web app can't follow the phone around in the background like Google Maps does, so it takes one location fix
+   at the moments you tap Clock on, Clock off or Log drive to here, and logs the drive from the last place you were
+   with the km worked out by road. Anything missed can be filled from Google Timeline later. */
+const hmNow = () => { const n = new Date(); return pad(n.getHours()) + ":" + pad(n.getMinutes()); };
+async function locate(ms){
+  ms = ms || 9000;
+  // the first time, the phone asks whether to allow location, so give you time to answer
+  let ask = false; try { ask = (await navigator.permissions.query({name:"geolocation"})).state === "prompt"; } catch(e){}
+  return new Promise(res => {
+    if (!navigator.geolocation) return res(null);
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    setTimeout(() => fin(null), ask ? 40000 : ms + 1000);
+    try { navigator.geolocation.getCurrentPosition(p => fin(p.coords.accuracy <= 400 ? [p.coords.latitude, p.coords.longitude] : null), () => fin(null), {enableHighAccuracy:true, timeout:ms, maximumAge:5000}); } catch(e){ fin(null); }
+  });
+}
+async function revLabel(ll){
+  const d = await getJSON(`https://photon.komoot.io/reverse?lon=${ll[1]}&lat=${ll[0]}&limit=1&lang=en`, 8000);
+  const f = (d.features || [])[0], L = f && placeLabel(f); let label = L ? L.label : "";
+  if (label && L.ll && kmBetween(ll, [L.ll[1], L.ll[0]]) > 0.15) label = "Near " + label;
+  return label;
+}
+/* where you are: a job site, home, or a named place (Bunnings Kotara…) */
+async function placeAt(ll){
+  const s = S(), sites = [];
+  for (const j of all("job").filter(j => (j.site || "").trim() && (OPEN_ST.includes(j.status) || j.status === "done"))) { try { const c = await geocode(j.site); sites.push({jobId:j.id, d:kmBetween(ll, [c[1], c[0]]), site:j.site}); } catch(e){} }
+  const near = sites.filter(x => x.d <= 0.3).sort((a, b) => a.d - b.d);
+  if (near.length) return {label:near[0].site, jobIds:[...new Set(near.map(x => x.jobId))], ll};
+  if (s.home) { try { const c = await geocode(s.home); if (kmBetween(ll, [c[1], c[0]]) <= 0.3) return {label:s.home, home:true, ll}; } catch(e){} }
+  const k = ll[0].toFixed(4) + "," + ll[1].toFixed(4), c = rgCache(); let label = c[k] || "";
+  if (!label && navigator.onLine) { try { label = await revLabel(ll); c[k] = label; rgSave(); } catch(e){} }
+  return {label:label || ll[0].toFixed(5) + ", " + ll[1].toFixed(5), ll, named:!!label};
+}
+/* the last place you were today: where your last trip ended, the last job you clocked off, or home */
+function lastPlace(l){
+  const tr = (l.trips || []).filter(t => (t.to || "").trim()); if (tr.length) return tr[tr.length - 1].to;
+  const done = (l.entries || []).filter(e => e.finish && (e.site || "").trim()); if (done.length) return done[done.length - 1].site;
+  return S().home || "";
+}
+function autoTrip(l, from, to, why, jobId, toLL){
+  if (!(to || "").trim() || from && normAddr(from) === normAddr(to)) return null;
+  if (toLL) geoRemember(to, [toLL[1], toLL[0]]);
+  const t = {id:uid("tr"), from:from || "", to, why:why || "", jobId:jobId || "", km:"", back:false, time:hmNow(), auto:true};
+  (l.trips = l.trips || []).push(t); put(touch(l)); return t;
+}
+async function fillKm(l, t){
+  if (!t || !t.from || !t.to) return;
+  try { const km = await drivingKm(t.from, t.to); const l2 = getDoc(l.id), t2 = l2 && (l2.trips || []).find(x => x.id === t.id); if (t2 && !num(t2.km)) { t2.km = km; t2.kmAuto = true; t.km = km; put(touch(l2)); } } catch(e){}
+}
+const placeName = a => a && normAddr(a) === normAddr(S().home) ? "home" : shortAddr(a);
+
 /* money */
 VIEWS.money = () => {
   const tab = UI.moneyTab;
@@ -1582,6 +1633,7 @@ VIEWS.settings = () => {
     ${IS_PWA ? syncCard() : ""}
     <div class="card"><h2>Your business</h2><div class="fields">${f("name","Your name")}${f("trading","Business name")}${f("abn","ABN")}${f("phone","Phone","tel")}${f("email","Email","email")}${f("area","Service area")}</div>
       <label class="field" style="margin-top:10px"><span>Home or yard address (where your driving starts)</span><input type="text" ${K("home")} data-sug="addr" autocomplete="off" value="${esc(s.home)}" placeholder="Street, suburb"></label>
+      <label class="check small" style="margin-top:10px"><input type="checkbox" ${K("autoDrive")} ${s.autoDrive !== false ? "checked" : ""}> Log my drives when I clock on, clock off or tap Log drive to here (uses your location at that moment)</label>
       <div class="row" style="margin-top:12px;align-items:center"><div class="logoprev">${s.logoImg ? `<img data-img="${esc(s.logoImg)}" alt="Your logo">` : `<span class="muted small">No logo yet</span>`}</div><button class="btn" data-act="setlogo">${ic("img")} ${s.logoImg ? "Change logo" : "Add your logo"}</button>${s.logoImg ? `<button class="btn ghost" data-act="rmlogo">Remove</button>` : ""}</div>
       <p class="small muted" style="margin-bottom:0">Your logo and details are kept in your own account and show on your quotes and invoices.</p></div>
     <div class="card"><h2>Bank details for invoices</h2><div class="fields">${f("bankName","Account name")}${f("bsb","BSB","text",'inputmode="numeric"')}${f("acct","Account number","text",'inputmode="numeric"')}</div><p class="small muted">${IS_PWA ? "Saved in your own Google account" : "Saved to your claude.ai account"} and only printed on invoices you make.</p></div>
@@ -1803,10 +1855,41 @@ const ACT = {
     if (!ok) return; put({id:uid("tr"), kind:"transfer", pot:d.pot, ...ok}); render();
   },
   async deltransfer(d){ if (await confirmBox("Remove this entry?", "", "Remove", true)) { del(d.id); render(); } },
-  clockon: () => { const t = today(); const l = ensureLog(t); const n = new Date(); const m = Math.round((n.getHours() * 60 + n.getMinutes()) / 5) * 5; const active = all("job").filter(j => j.status === "active"); const jid = active.length === 1 ? active[0].id : (l.entries[l.entries.length - 1]?.jobId || "");
+  clockon: async () => { const t = today(); const l = ensureLog(t); const n = new Date(); const m = Math.round((n.getHours() * 60 + n.getMinutes()) / 5) * 5; const active = all("job").filter(j => j.status === "active"); const jid = active.length === 1 ? active[0].id : (l.entries[l.entries.length - 1]?.jobId || "");
     let e = l.entries.find(x => !x.did && !x.invId && (!x.jobId || x.jobId === jid) && !(x.start && !x.finish)); if (!e) { e = blankEntry(jid); l.entries.push(e); } else if (!e.jobId && jid) { e.jobId = jid; e.site = e.site || getDoc(jid)?.site || ""; }
-    e.start = pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); e.finish = ""; put(l); render(); toast("Clocked on at " + t12(e.start)); },
-  clockoff: () => { const l = getDoc("log_" + today()); const e = l && l.entries.find(x => x.start && !x.finish); if (!e) return; const n = new Date(); const m = Math.round((n.getHours() * 60 + n.getMinutes()) / 5) * 5; e.finish = pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); put(l); UI.logDate = today(); toast(`Clocked off. ${fmtH(entryHours(e))} today. Add what you did.`); go("log"); },
+    e.start = pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); e.finish = ""; put(l); render(); toast("Clocked on at " + t12(e.start));
+    if (S().autoDrive === false) return;
+    // where are you? that picks the job if you're at one of your sites, and logs the drive here
+    const ll = await locate(), here = ll ? await placeAt(ll) : null;
+    const l2 = getDoc(l.id), e2 = l2 && (l2.entries || []).find(x => x.id === e.id); if (!e2) return;
+    if (here && here.jobIds && !here.jobIds.includes(e2.jobId)) { e2.jobId = tlJob(here.jobIds, t); e2.site = getDoc(e2.jobId)?.site || here.label; }
+    else if (here && !here.home && !here.jobIds && !(e2.site || "").trim()) e2.site = here.label;
+    const j = getDoc(e2.jobId), to = here && !here.home ? here.label : (j && j.site) || e2.site || "";
+    const from = lastPlace(l2), tr = from ? autoTrip(l2, from, to, tlQuoteish(j, t) ? "Quote visit" : here && !here.home && !here.jobIds && TL_SUPPLY.test(here.label) ? "Supplier run" : "Travel to site", e2.jobId, here && !here.home ? here.ll : null) : null;
+    put(touch(l2)); if (tr) await fillKm(l2, tr);
+    render(); toast(`Clocked on at ${t12(e2.start)}${j ? " for " + jobLabel(j) : ""}.${tr ? ` Drive from ${placeName(tr.from) || "your last stop"} logged${num(tr.km) ? ", " + tr.km + " km" : ""}.` : ""}`);
+  },
+  clockoff: async () => { const l = getDoc("log_" + today()); const e = l && l.entries.find(x => x.start && !x.finish); if (!e) return; const n = new Date(); const m = Math.round((n.getHours() * 60 + n.getMinutes()) / 5) * 5; e.finish = pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); put(l); UI.logDate = today();
+    const s = S(), j = getDoc(e.jobId), site = (e.site || (j && j.site) || "").trim();
+    if (s.autoDrive !== false && (s.home || "").trim() && site && normAddr(site) !== normAddr(s.home)) {
+      const ok = await openModal(`<h2>Clocked off at ${t12(e.finish)}</h2><p class="muted" style="margin:0">${fmtH(entryHours(e))} today${j ? " on " + esc(jobLabel(j)) : ""}.</p><p style="margin:0">Heading home now? The drive goes in your driving log. Going somewhere else first? Tap <b>Log drive to here</b> when you get there.</p><div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Not yet</button><button class="btn primary" data-act="modal-yes">Log the drive home</button></div>`);
+      if (ok) { const l2 = getDoc(l.id); const tr = autoTrip(l2, site, s.home, "Travel home from site", e.jobId); if (tr) await fillKm(l2, tr); }
+    }
+    toast(`Clocked off. ${fmtH(entryHours(e))} today. Add what you did.`); go("log"); },
+  logstop: async () => {
+    const t = today(); toast("Finding where you are…");
+    const ll = await locate(); const l = ensureLog(t); UI.logDate = t;
+    if (!ll) { if (UI.view !== "log") go("log"); else render(); toast("Couldn't get your location. Check location is allowed for this app, or add the trip by hand."); return; }
+    const here = await placeAt(ll), l2 = getDoc(l.id), from = lastPlace(l2);
+    if (from && normAddr(from) === normAddr(here.label)) { if (UI.view !== "log") go("log"); else render(); toast(`You're still at ${placeName(here.label)}, so there's no drive to log.`); return; }
+    const jobs = [...new Set((l2.entries || []).map(e => e.jobId).filter(Boolean))];
+    const jobId = here.jobIds ? tlJob(here.jobIds, t) : jobs.length === 1 ? jobs[0] : "";
+    const why = here.jobIds ? (tlQuoteish(getDoc(jobId), t) ? "Quote visit" : "Travel to site") : here.home ? (from && (l2.entries || []).some(e => normAddr(e.site) === normAddr(from)) ? "Travel home from site" : "Travel home") : TL_SUPPLY.test(here.label) ? "Supplier run" : "";
+    const tr = autoTrip(l2, from, here.label, why, jobId, here.jobIds || here.home ? null : here.ll);
+    if (tr) await fillKm(l2, tr);
+    if (UI.view !== "log") go("log"); else render();
+    toast(`Logged ${from ? placeName(from) + " to " : "the drive to "}${placeName(here.label)}${tr && num(tr.km) ? ", " + tr.km + " km" : ""}.${why ? "" : " Add a reason for the trip."}${from ? "" : " Add where you came from."}`);
+  },
   followup: d => { const j = getDoc(d.id), c = clientOf(j), s = S(); copyText(`Hi ${(c.name || "there").split(" ")[0]},
 
 Just checking in on the quote I sent through on ${dAU(j.quoteDate)} for ${j.title || "the job"}${j.site ? " at " + j.site : ""}. Happy to answer any questions or adjust anything.
@@ -2018,6 +2101,7 @@ async function searchPlaces(q){
     .map((x, i) => ({...x, rank:i + (x.ll && kmFromHome(x.ll) > 120 ? 20 : 0)})).sort((a, b) => a.rank - b.rank);
 }
 async function geocode(addr){
+  const m = String(addr || "").match(/^\s*(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)\s*$/); if (m) return [+m[2], +m[1]];
   const k = normAddr(addr); const c = geoCache(); if (c[k]) return c[k];
   const d = await getJSON(photonUrl(addr, 1), 8000); const f = (d.features || [])[0];
   if (!f || !f.geometry) throw new Error(`Couldn't find "${addr}" on the map.`);
