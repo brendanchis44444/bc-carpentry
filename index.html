@@ -251,6 +251,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 .paper .ph{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
 .matpick{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;max-height:260px;overflow-y:auto}.mp{display:flex;gap:10px;align-items:center;padding:9px 10px;border-top:1px solid var(--line);cursor:pointer}.mp:first-child{border-top:0}.mp input{width:20px;height:20px;flex:none}.mp.done{opacity:.6}
 .modal details summary{cursor:pointer;padding:4px 0;color:var(--muted)}.modal details textarea{margin-top:6px;width:100%}
+#cupill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:30;display:flex;gap:2px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:4px;box-shadow:0 6px 20px rgba(0,0,0,.18);white-space:nowrap}
+#cupill .btn{border-radius:99px}
+body.cu-on main{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+@media (min-width:900px){#cupill{bottom:20px;left:calc(50% + 116px)}}
+.custeps{display:flex;flex-direction:column;gap:2px}.custeps button{display:flex;gap:10px;align-items:center;text-align:left;background:none;border:0;padding:6px 8px;border-radius:8px;font:inherit;font-size:.9rem;color:var(--muted);cursor:pointer}.custeps button span{width:16px;text-align:center;flex:none}.custeps button.ok{color:var(--ink)}.custeps button.on{background:var(--surface2);color:var(--ink);font-weight:600}
 .tlrow{display:flex;align-items:flex-start;gap:10px}.tlrow .check{align-items:flex-start;flex:1;min-width:0}.tlrow .check input{margin-top:1px;flex:none}.tlrow>.pill{flex:none;margin-top:1px}.tlrow>a{flex:none;padding-top:2px}.tlf{margin:-2px 0 4px 28px}.tlother summary{cursor:pointer;padding:2px 0}details.tlother{margin-top:8px}
 .tripkm{align-items:flex-end;gap:10px}.tripkm .field{width:130px}.tripkm .check{padding-bottom:9px}
 .jno{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
@@ -624,6 +629,8 @@ function jobActual(j){
 const invTotal = i => round2(sum(i.lines || [], l => num(l.qty) * num(l.rate)));
 const invStatus = i => i.status === "paid" ? "paid" : i.status === "sent" && i.due && i.due < today() ? "overdue" : i.status || "draft";
 const clientOf = j => getDoc(j.clientId) || {name:"", phone:"", email:"", address:""};
+/* where a job is: its site address, or the client's address when the job doesn't have one */
+const jobSite = j => j ? (j.site || "").trim() || (clientOf(j).address || "").trim() : "";
 function estimateFactor(){
   const done = all("job").filter(j => ["done","paid"].includes(j.status));
   let est = 0, act = 0, n = 0;
@@ -748,7 +755,10 @@ document.addEventListener("pointerup", () => setTimeout(() => { if (PDOWN) { PDO
 const AFTER = {
   tripaddr(doc, el){ const t = (doc.trips || [])[+el.dataset.i]; if (t && t.from && t.to && (!num(t.km) || t.kmAuto)) setTimeout(() => calcTrip(doc.id, t.id), 30); },
   tripkm(doc, el){ const t = (doc.trips || [])[+el.dataset.i]; if (t && t.kmAuto) { t.kmAuto = false; put(doc); } },
-  logjob(doc, el){ const i = +el.dataset.i; const e = doc.entries[i]; const j = getDoc(e.jobId); if (j && !e.site) e.site = j.site || ""; put(doc); },
+  logjob(doc, el){ const i = +el.dataset.i; const e = doc.entries[i]; const site = jobSite(getDoc(e.jobId)); if (site) e.site = site; put(doc); },
+  // a site typed for a job that has no address yet becomes the job's address, so it fills in next time
+  logsite(doc, el){ const e = doc.entries[+el.dataset.i], j = e && getDoc(e.jobId); if (j && !(j.site || "").trim() && (e.site || "").trim() && e.site.trim() !== "Various") { j.site = e.site.trim(); put(touch(j)); } },
+  tripjob(doc, el){ const t = (doc.trips || [])[+el.dataset.i], site = t && jobSite(getDoc(t.jobId)); if (!site || (t.to || "").trim()) return; t.to = site; if (!(t.from || "").trim()) t.from = S().home || ""; put(doc); if (t.from && !num(t.km)) setTimeout(() => calcTrip(doc.id, t.id), 30); },
   client(doc){ }
 };
 document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.k && el.type !== "checkbox" && el.tagName !== "SELECT") onBind(el, false); });
@@ -772,11 +782,11 @@ document.addEventListener("pointerdown", e => { bgDown = e.target; }, true);
 
 /* ---------- render ---------- */
 const NAV = [["home","Home","home"],["jobs","Jobs","jobs"],["calendar","Calendar","cal"],["log","Day log","log"],["money","Money","money"]];
-const navOf = v => ({timeline:"log", job:"jobs", quote:"jobs", clients:"jobs", client:"jobs", invoice:"money", settings:"settings", estimator:"jobs"}[v] || v);
+const navOf = v => ({catchup:"home", timeline:"log", job:"jobs", quote:"jobs", clients:"jobs", client:"jobs", invoice:"money", settings:"settings", estimator:"jobs"}[v] || v);
 function title(){
   if (UI.view === "job") { const j = getDoc(UI.id); return j ? jobLabel(j) : "Job"; }
   if (UI.view === "invoice") { const i = getDoc(UI.id); return i ? "Invoice " + (i.number || "") : "Invoice"; }
-  return ({home:bizName(), jobs:"Jobs", calendar:"Calendar", log:"Day log", money:"Money", settings:"Settings", clients:"Clients", client:"Client", timeline:"Google Timeline"}[UI.view]) || bizName();
+  return ({home:bizName(), jobs:"Jobs", calendar:"Calendar", log:"Day log", money:"Money", settings:"Settings", clients:"Clients", client:"Client", timeline:"Google Timeline", catchup:"Catch up"}[UI.view]) || bizName();
 }
 let renderQueued = false, RENDERING = false;
 function render(){
@@ -795,6 +805,13 @@ function render(){
   fitPaper();
   if (keep) { const el = keep.k ? document.querySelector(`[data-k="${CSS.escape(keep.k)}"]`) : document.getElementById(keep.id); if (el) { el.focus({preventScroll:true}); try { if (keep.s != null) el.setSelectionRange(keep.s, keep.e); } catch(e){} } }
   syncHist();
+  drawCuPill();
+}
+function drawCuPill(){
+  let p = document.getElementById("cupill"); const show = !!UI.cuOn && UI.view !== "catchup";
+  if (!p) { p = document.createElement("div"); p.id = "cupill"; document.body.appendChild(p); }
+  p.hidden = !show; document.body.classList.toggle("cu-on", show);
+  if (show) p.innerHTML = `<button class="btn primary sm" data-act="cuback">${ic("back")} Back to catch-up guide</button><button class="x" data-act="cupilloff" aria-label="Stop showing this">${ic("x")}</button>`;
 }
 function drawChrome(){
   const cur = navOf(UI.view);
@@ -841,6 +858,7 @@ VIEWS.home = () => {
   <div class="row between"><div><div class="label">${DOW[d.getDay()]}</div><h1>${d.getDate()} ${MON[d.getMonth()]}</h1></div>
     <div class="row"><button class="btn" data-act="newexp" data-date="${t}">${ic("plus")} Add expense</button><button class="btn" data-act="newevent" data-date="${t}">${ic("cal")} Add to calendar</button>${open ? `<button class="btn accent" data-act="clockoff">Clock off <span class="small" style="opacity:.85">(on since ${t12(open.start)})</span></button>` : `<button class="btn primary" data-act="clockon">Clock on</button>`}<button class="btn" data-act="logstop">Log drive to here</button></div></div>
   ${renew.map(r => { const n = daysBetween(t, r.date); return `<div class="note" ${n < 0 ? 'style="border-color:var(--bad);background:var(--bad-soft)"' : ""}><b>${esc(r.name)}</b> ${n < 0 ? `expired on ${dAU(r.date)}` : n === 0 ? "expires today" : `expires in ${n} day${n === 1 ? "" : "s"} (${dAU(r.date)})`}. <a href="#" data-act="nav" data-v="settings">Update the date</a> once it's renewed.</div>`; }).join("")}
+  ${cuHomeCard()}
   ${tlDue ? `<div class="note">${tlGap < 0 ? "Bring in your Google Timeline and the app fills your driving log and time on site for you." : `It's been ${tlGap} days since you brought in your Google Timeline.`} <a href="#" data-act="tlopen">Do it now</a> · <a href="#" data-act="tlsnooze">Later</a></div>` : ""}
   <div class="tiles">
     <div class="tile ${overdue.length ? "accent" : ""}" data-act="money" data-tab="invoices"><div class="stat"><span class="k">Owed to you</span><span class="v">${fmtMoney(owed)}</span><span class="sub">${unpaid.length} unpaid${overdue.length ? `, ${overdue.length} overdue` : ""}</span></div></div>
@@ -899,10 +917,11 @@ const CHANGE = {
   jobsearch(el){ UI.jobSearch = el.value; render(); },
   logdate(el){ if (el.value) { UI.logDate = el.value; render(); } },
   fy(el){ UI.fy = +el.value; render(); },
+  evjob(el){ const w = $("#m_where"), site = jobSite(getDoc(el.value)); if (w && (!w.value.trim() || w.dataset.auto)) { w.value = site; if (site) w.dataset.auto = "1"; else delete w.dataset.auto; } },
   tl(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {}).on = el.checked; queueRender(); },
   tlf(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {})[el.dataset.f] = el.value; }
 };
-document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.ch === "tlf") CHANGE.tlf(el); });
+document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.ch === "tlf") CHANGE.tlf(el); if (el.id === "m_where") delete el.dataset.auto; });
 document.addEventListener("input", e => { if (e.target.id === "clisearch") { UI.cliSearch = e.target.value; clearTimeout(UI._cs); UI._cs = setTimeout(render, 200); } });
 document.addEventListener("input", e => { if (e.target.id === "jobsearch") { UI.jobSearch = e.target.value; clearTimeout(UI._st); UI._st = setTimeout(render, 250); } });
 
@@ -1162,7 +1181,7 @@ VIEWS.log = () => {
   const K = p => `data-k="${id}|${p}"`;
   const ents = (log.entries || []).map((e, i) => `<div class="entry">
       <div class="row between"><label class="field grow"><span>Job</span><select ${K(`entries.${i}.jobId`)} data-after="logjob" data-i="${i}">${jobOpts(e.jobId)}</select></label><button class="x" data-act="rmrow" data-id="${id}" data-p="entries" data-i="${i}" aria-label="Remove">${ic("x")}</button></div>
-      <label class="field"><span>Site</span><input type="text" data-sug="addr" autocomplete="off" ${K(`entries.${i}.site`)} value="${esc(e.site)}" placeholder="Address"></label>
+      <label class="field"><span>Site</span><input type="text" data-sug="addr" autocomplete="off" data-after="logsite" data-i="${i}" ${K(`entries.${i}.site`)} value="${esc(e.site)}" placeholder="Address"></label>
       <div class="times"><label class="field"><span>Start</span><input type="time" ${K(`entries.${i}.start`)} value="${esc(e.start)}"></label><label class="field"><span>Finish</span><input type="time" ${K(`entries.${i}.finish`)} value="${esc(e.finish)}"></label><label class="field"><span>Breaks (min)</span><input type="number" inputmode="numeric" ${K(`entries.${i}.breakMin`)} value="${e.breakMin ?? ""}"></label><div class="field"><span>Hours</span><div class="hoursbadge" style="padding-top:6px">${fmtH(entryHours(e))}</div></div></div>
       <label class="field"><span>What you did</span><textarea ${K(`entries.${i}.did`)} placeholder="e.g. Cladding install, demo internal wall for new lintel">${esc(e.did)}</textarea></label>
       ${e.invId ? `<div class="tiny muted">Billed on invoice ${esc(getDoc(e.invId)?.number || "")}</div>` : ""}
@@ -1197,7 +1216,7 @@ function driveCard(log, K, id){
     <div class="fields"><label class="field"><span>From</span><input type="text" data-sug="addr" autocomplete="off" ${K(`trips.${i}.from`)} data-after="tripaddr" data-i="${i}" value="${esc(t.from)}" placeholder="Home, Bunnings Kotara…"></label>
       <label class="field"><span>To</span><input type="text" data-sug="addr" autocomplete="off" ${K(`trips.${i}.to`)} data-after="tripaddr" data-i="${i}" value="${esc(t.to)}" placeholder="Site, supplier…"></label></div>
     <div class="fields"><label class="field"><span>Reason</span><input type="text" list="dl_why" ${K(`trips.${i}.why`)} value="${esc(t.why)}" placeholder="e.g. Getting prices on materials"></label>
-      <label class="field"><span>Job</span><select ${K(`trips.${i}.jobId`)}>${jobOptions(t.jobId, "General business (no job)")}</select></label></div>
+      <label class="field"><span>Job</span><select ${K(`trips.${i}.jobId`)} data-after="tripjob" data-i="${i}">${jobOptions(t.jobId, "General business (no job)")}</select></label></div>
     <div class="row tripkm"><label class="field"><span>Km one way</span><input type="number" inputmode="decimal" step="any" ${K(`trips.${i}.km`)} data-after="tripkm" data-i="${i}" value="${t.km ?? ""}"></label>
       <label class="check"><input type="checkbox" ${K(`trips.${i}.back`)} ${t.back ? "checked" : ""}> Return trip</label>
       <span class="grow"></span>
@@ -1502,6 +1521,142 @@ async function fillKm(l, t){
 }
 const placeName = a => a && normAddr(a) === normAddr(S().home) ? "home" : shortAddr(a);
 
+/* ---------- catch-up guide ----------
+   Walks you through getting every job complete, one step at a time: your details, the basics for each job, Google
+   Timeline, then each job's prices, days, driving, expenses and invoices. What's done is worked out from what's in
+   the app, so it picks up where you left off on any device. */
+const CU_WORK = ["won","active","done","paid"];
+const CU_PARTS = ["Your details", "The basics for each job", "Google Timeline", "Finish each job"];
+const cuDays = j => [...new Set(logEntries().filter(e => e.jobId === j.id).map(e => e.date))].sort();
+const cuNoDrive = j => cuDays(j).filter(d => { const l = getDoc("log_" + d); return l && !(l.trips || []).length && !num(l.km); });
+const cuNoPrice = j => (j.sections || []).flatMap(s => (s.mats || []).filter(m => (m.text || "").trim() && !num(m.cost)));
+function cuSteps(){
+  const s = S(), sk = s.cuSkip || {}, steps = [];
+  const setup = (k, title, done, o) => steps.push({key:"setup:" + k, k, part:0, title, done:!!done, skipped:!!sk[k], ...o});
+  setup("biz", "Add your business details", s.name && s.abn && s.phone && s.bsb && s.acct, {why:"Your name, ABN, phone and bank details go on every quote and invoice."});
+  setup("home", "Add your home or yard address", (s.home || "").trim(), {why:"Your driving starts and ends here, so trips and km can be filled in for you."});
+  setup("veh", "Pick what you drive for work", s.vehicle, {why:"This decides how your vehicle costs are claimed at tax time."});
+  const jobs = all("job").sort((a, b) => noOf(a.quoteNo) - noOf(b.quoteNo) || (a.created || "").localeCompare(b.created || ""));
+  const js = (j, part, k, title, done, o) => steps.push({key:j.id + ":" + k, k, part, job:j, title, done:!!done, skipped:!!(j.cuSkip || {})[k], ...o});
+  jobs.forEach(j => {
+    js(j, 1, "status", "Where is this job at?", (j.cuOk || {}).status, {why:"Tap where it's up to now. Finished means the work's done, Paid means the money's in.", noskip:true});
+    if (j.status === "lost") return;
+    js(j, 1, "client", "Who was it for?", j.clientId && getDoc(j.clientId), {why:"Search your clients, or type a new name to add them.", skipTxt:"No client"});
+    js(j, 1, "site", "Where was the job?", (j.site || "").trim(), {why:"The site address fills in your day logs and driving for this job.", skipTxt:"No site"});
+  });
+  steps.push({key:"setup:tl", k:"tl", part:2, title:"Bring in your Google Timeline", done:!!s.tlLast, skipped:!!sk.tl, why:"It finds the days you were at each job site and your driving, so you don't have to type them in. Do it once now that your jobs have their addresses.", skipTxt:"I don't use Timeline"});
+  jobs.forEach(j => {
+    const st = j.status || "lead"; if (st === "lost" || st === "lead") return;
+    const invs = all("invoice").filter(i => i.jobId === j.id);
+    js(j, 3, "prices", "Put prices on the quote", quoteCalc(j).total > 0 && !cuNoPrice(j).length, {why:"Every material needs a price so the job's totals and profit are right.", skipTxt:"Not quoted"});
+    js(j, 3, "qdate", "When did you send the quote?", j.quoteDate, {why:"The quote date goes on the quote and shows how long it took to win.", skipTxt:"Wasn't quoted"});
+    if (!CU_WORK.includes(st)) return;
+    js(j, 3, "days", "Add the days you worked", cuDays(j).length, {why:"Your hours on each day. They show what the job really took and go on day-rate invoices.", skipTxt:"No hours to log"});
+    js(j, 3, "drive", "Add your driving", cuDays(j).length && !cuNoDrive(j).length, {why:"Each work trip counts at tax time. Home to site and back for each day is the usual one.", skipTxt:"No driving to log"});
+    js(j, 3, "exp", "Add what you spent", all("expense").some(e => e.jobId === j.id), {why:"Receipts for materials, tip fees and anything else you bought for this job.", skipTxt:"Nothing spent"});
+    if (!["done","paid"].includes(st)) return;
+    js(j, 3, "inv", "Send the invoice", invs.length, {why:"Make the invoice for this job, even if you've already been paid.", skipTxt:"No invoice needed"});
+    if (st === "paid") js(j, 3, "paid", "Mark the invoice paid", invs.length && invs.every(i => i.status === "paid"), {why:"Mark each invoice paid, then set the Paid on date to when the money came in.", skipTxt:"Not needed"});
+  });
+  return steps;
+}
+const cuOpen = x => !x.done && !x.skipped;
+/* after a step, carry on with the same job's next step in this part, otherwise the first step still to do */
+function cuAdvance(fromKey){
+  const steps = cuSteps(), i = steps.findIndex(x => x.key === fromKey), cur = steps[i], later = UI.cuLater || new Set();
+  const nx = cur && cur.job ? steps.slice(i + 1).find(x => x.job && x.job.id === cur.job.id && x.part === cur.part && cuOpen(x) && !later.has(x.key)) : null;
+  UI.cuStep = nx ? nx.key : null;
+}
+function cuCurrent(steps){
+  let st = UI.cuStep && steps.find(x => x.key === UI.cuStep);
+  if (!st) { const later = UI.cuLater || new Set(); st = steps.find(x => cuOpen(x) && !later.has(x.key)) || steps.find(cuOpen); UI.cuStep = st ? st.key : null; }
+  return st;
+}
+function cuControls(x){
+  const s = S(), j = x.job, SK = p => `data-k="settings|${p}"`, JK = p => `data-k="${j && j.id}|${p}"`;
+  switch (x.k) {
+    case "biz": return `<div class="fields"><label class="field"><span>Your name</span><input type="text" ${SK("name")} value="${esc(s.name)}"></label><label class="field"><span>ABN</span><input type="text" inputmode="numeric" ${SK("abn")} value="${esc(s.abn)}"></label></div>
+      <div class="fields"><label class="field"><span>Phone</span><input type="tel" ${SK("phone")} value="${esc(s.phone)}"></label><label class="field"><span>Email</span><input type="email" ${SK("email")} value="${esc(s.email)}"></label></div>
+      <div class="fields"><label class="field"><span>BSB</span><input type="text" inputmode="numeric" ${SK("bsb")} value="${esc(s.bsb)}"></label><label class="field"><span>Account number</span><input type="text" inputmode="numeric" ${SK("acct")} value="${esc(s.acct)}"></label></div>
+      <p class="tiny muted" style="margin:6px 0 0">Your logo and the rest are in <a href="#" data-act="nav" data-v="settings">Settings</a>.</p>`;
+    case "home": return `<label class="field"><span>Home or yard address</span><input type="text" ${SK("home")} data-sug="addr" autocomplete="off" value="${esc(s.home)}" placeholder="Street, suburb"></label>`;
+    case "veh": return `<div class="stack" style="gap:8px"><button class="btn ${s.vehicle === "car" ? "primary" : ""}" data-act="cuveh" data-v="car">A car, or a van or ute that carries under 1 tonne</button><button class="btn ${s.vehicle === "heavy" ? "primary" : ""}" data-act="cuveh" data-v="heavy">A van or ute that carries 1 tonne or more</button></div><p class="tiny muted" style="margin:6px 0 0">Not sure? Most utes and vans are under 1 tonne. Your accountant can confirm.</p>`;
+    case "tl": return `<button class="btn primary" data-act="tlopen">Open Google Timeline</button>`;
+    case "status": return `<div class="chips">${STATUSES.map(([k, l]) => `<button class="chip ${(j.status || "lead") === k ? "on" : ""}" data-act="custatus" data-id="${j.id}" data-s="${k}">${l}</button>`).join("")}</div>`;
+    case "client": return clientPicker({bind:`${j.id}|clientId`, value:j.clientId});
+    case "site": { const ca = (clientOf(j).address || "").trim(); return `<input type="text" ${JK("site")} data-sug="addr" autocomplete="off" value="${esc(j.site)}" placeholder="Street, suburb">${ca && !(j.site || "").trim() ? `<div style="margin-top:8px"><button class="btn sm" data-act="cusite" data-id="${j.id}">Same as ${esc(clientOf(j).name || "client")}'s address: ${esc(shortAddr(ca))}</button></div>` : ""}`; }
+    case "prices": { const miss = cuNoPrice(j); return `<p class="small" style="margin:0 0 8px">${quoteCalc(j).total > 0 ? `Quote total so far <b>${money2(quoteCalc(j).total)}</b>.` : "No prices on it yet."}${miss.length ? ` ${miss.length} material${miss.length === 1 ? " has" : "s have"} no price: ${esc(miss.slice(0, 4).map(m => m.text.trim()).join(", "))}${miss.length > 4 ? "…" : ""}.` : ""}</p><button class="btn primary" data-act="cugo" data-v="plan" data-id="${j.id}">Open the job's plan</button>`; }
+    case "qdate": return `<label class="field" style="max-width:220px"><span>Quote sent on</span><input type="date" ${JK("quoteDate")} value="${esc(j.quoteDate)}"></label>`;
+    case "days": { const ds = cuDays(j), h = sum(logEntries().filter(e => e.jobId === j.id), entryHours); return `${ds.length ? `<p class="small" style="margin:0 0 8px"><b>${ds.length} day${ds.length === 1 ? "" : "s"}</b> logged, ${fmtH(h)} in total, ${dShort(ds[0])}${ds.length > 1 ? " to " + dShort(ds[ds.length - 1]) : ""}.</p>` : ""}<div class="row"><button class="btn primary" data-act="cudays" data-id="${j.id}">${ds.length ? "Add more days" : "Add the days you worked"}</button>${S().tlLast ? "" : `<button class="btn" data-act="tlopen">Use Google Timeline</button>`}</div>`; }
+    case "drive": { const ds = cuDays(j), miss = cuNoDrive(j), site = jobSite(j); if (!ds.length) return `<p class="small muted" style="margin:0">Add the days you worked first.</p>`;
+      return `<p class="small" style="margin:0 0 8px">${miss.length ? `<b>${miss.length} of ${ds.length} day${ds.length === 1 ? "" : "s"}</b> on this job ${miss.length === 1 ? "has" : "have"} no driving yet.` : "Every day on this job has its driving."}</p>
+        <div class="row">${miss.length && s.home && site ? `<button class="btn primary" data-act="cutrips" data-id="${j.id}">Add home to site and back for ${miss.length === 1 ? "that day" : `those ${miss.length} days`}</button>` : ""}<button class="btn" data-act="tlopen">Use Google Timeline</button></div>
+        ${!s.home || !site ? `<p class="tiny muted" style="margin:6px 0 0">Add ${!s.home ? "your home address" : "the job's site address"} and this can fill in the trips for you.</p>` : ""}`; }
+    case "exp": { const n = all("expense").filter(e => e.jobId === j.id).length; return `${n ? `<p class="small" style="margin:0 0 8px">${n} expense${n === 1 ? "" : "s"} so far.</p>` : ""}<button class="btn primary" data-act="newexp" data-job="${j.id}" data-date="${esc(cuDays(j)[0] || j.start || today())}">Add an expense for this job</button>`; }
+    case "inv": return `<button class="btn primary" data-act="newinv" data-job="${j.id}">Create the invoice</button>`;
+    case "paid": return `<div class="stack" style="gap:6px">${all("invoice").filter(i => i.jobId === j.id).map(i => `<div class="row between"><span class="small">${esc(i.number || "Invoice")} · ${money2(invTotal(i))}</span>${i.status === "paid" ? `<span class="pill paidinv">Paid ${esc(dAU(i.paidDate))}</span>` : `<button class="btn sm" data-act="go" data-v="invoice" data-id="${i.id}">Open it</button>`}</div>`).join("")}</div>`;
+  }
+  return "";
+}
+VIEWS.catchup = () => {
+  UI.cuOn = true;
+  const steps = cuSteps(), x = cuCurrent(steps), nDone = steps.filter(y => !cuOpen(y)).length, pct = steps.length ? Math.round(nDone / steps.length * 100) : 100;
+  const jobs = [...new Map(steps.filter(y => y.job).map(y => [y.job.id, y.job])).values()];
+  const ico = y => y.done ? "✓" : y.skipped ? "–" : "○";
+  const head = `<div class="card"><div class="row between"><h2 style="margin:0">Catch up on your jobs</h2><span class="small muted">${nDone} of ${steps.length} steps</span></div>
+    <div class="meter" style="margin-top:10px"><i style="width:${pct}%"></i></div>
+    <p class="small muted" style="margin:8px 0 0">Follow it one step at a time. It remembers where you're up to, so you can stop and come back whenever.</p></div>`;
+  if (!x) return `<div class="stack">${head}<div class="card"><h2>All caught up</h2><p class="small">Every job has what it needs. New jobs show up here if anything's missing.</p><button class="btn" data-act="cuhide">Hide the guide</button></div></div>`;
+  const jSteps = x.job ? steps.filter(y => y.job && y.job.id === x.job.id) : [];
+  const part = CU_PARTS[x.part], ready = !cuOpen(x);
+  const card = `<div class="card cunext">
+    <div class="tiny muted">Part ${x.part + 1} of 4 · ${esc(part)}</div>
+    ${x.job ? `<div class="row between" style="margin-top:4px"><b>${esc(jobLabel(x.job))}</b>${jobPill(x.job)}</div>` : ""}
+    <h2 style="margin:10px 0 4px">${esc(x.title)}${x.done ? ` <span class="pill paidinv">Done</span>` : x.skipped ? ` <span class="pill paid">Skipped</span>` : ""}</h2>
+    <p class="small muted" style="margin:0 0 10px">${esc(x.why || "")}</p>
+    ${cuControls(x)}
+    <div class="row between" style="margin-top:14px">
+      <div class="row">${!ready && !x.noskip ? `<button class="btn ghost sm" data-act="cuskip" data-key="${x.key}">Skip: ${esc(x.skipTxt || "not needed")}</button>` : ""}${x.skipped ? `<button class="btn ghost sm" data-act="cuunskip" data-key="${x.key}">Undo skip</button>` : ""}</div>
+      <div class="row">${!ready ? `<button class="btn sm" data-act="culater" data-key="${x.key}">Come back to it</button>` : ""}<button class="btn primary" data-act="cunext" ${ready ? "" : "disabled"}>Next step</button></div>
+    </div>
+    ${jSteps.length > 1 ? `<hr class="sep" style="margin:14px 0 8px"><div class="small muted" style="margin-bottom:4px">This job</div><div class="custeps">${jSteps.map(y => `<button class="${y.key === x.key ? "on" : ""} ${y.done ? "ok" : ""}" data-act="cugoto" data-key="${y.key}"><span>${ico(y)}</span>${esc(y.title)}</button>`).join("")}</div>` : ""}
+  </div>`;
+  const list = `<div class="card" style="padding:4px 12px"><div class="list">
+    ${(() => { const su = steps.filter(y => y.part === 0 || y.part === 2), d = su.filter(y => !cuOpen(y)).length; return `<div class="item" data-act="cugoto" data-key="${(su.find(cuOpen) || su[0]).key}"><div class="main"><div class="t">Your details and Timeline</div><div class="meter" style="margin-top:6px;max-width:220px"><i style="width:${Math.round(d / su.length * 100)}%"></i></div></div><div class="r small muted">${d} of ${su.length}</div></div>`; })()}
+    ${jobs.map(j => { const js = steps.filter(y => y.job && y.job.id === j.id), d = js.filter(y => !cuOpen(y)).length; return `<div class="item" data-act="cugoto" data-key="${(js.find(cuOpen) || js[0]).key}"><div class="main"><div class="t">${esc(jobLabel(j))}</div><div class="meter" style="margin-top:6px;max-width:220px"><i style="width:${Math.round(d / js.length * 100)}%"></i></div></div><div class="r small ${d === js.length ? "" : "muted"}">${d === js.length ? "✓ Done" : `${d} of ${js.length}`}</div></div>`; }).join("")}
+  </div></div>`;
+  return `<div class="stack">${head}${card}<h3 style="margin:6px 0 0">Everything</h3>${list}</div>`;
+};
+function cuHomeCard(){
+  const s = S(); if (s.cuHide || !all("job").length) return "";
+  const steps = cuSteps(), open = steps.filter(cuOpen).length; if (!open) return "";
+  const nDone = steps.length - open;
+  return `<div class="card"><div class="row between"><div class="grow" style="min-width:200px"><b>Catch up on your jobs</b><div class="small muted">${nDone} of ${steps.length} steps done. It walks you through what each job still needs.</div><div class="meter" style="margin-top:8px"><i style="width:${Math.round(nDone / steps.length * 100)}%"></i></div></div><button class="btn primary" data-act="cuopen">Open the guide</button></div></div>`;
+}
+const nextWorkday = d => { let x = addDays(d, 1); while ([0, 6].includes(parseD(x).getDay())) x = addDays(x, 1); return x; };
+async function cuDaysModal(j){
+  let date = (() => { const ds = cuDays(j); return ds.length ? nextWorkday(ds[ds.length - 1]) : j.start || j.quoteDate || today(); })();
+  for (;;) {
+    const ents = logEntries().filter(e => e.jobId === j.id).sort((a, b) => a.date.localeCompare(b.date)), prev = ents[ents.length - 1];
+    Store.cuAgain = false;
+    const ok = await openModal(`<h2>Days worked</h2><p class="small muted" style="margin:0">${esc(jobLabel(j))}${ents.length ? `. ${ents.length} day${ents.length === 1 ? "" : "s"} logged so far, the last on ${dShort(prev.date)}.` : ""}</p>
+      <div class="fields"><label class="field"><span>Date</span><input type="date" id="m_d" value="${date}"></label><label class="field"><span>Breaks (min)</span><input type="number" inputmode="numeric" id="m_b" value="${prev ? prev.breakMin ?? "" : S().breakMin ?? 45}"></label></div>
+      <div class="fields"><label class="field"><span>Start</span><input type="time" id="m_s" value="${esc(prev?.start || "07:00")}"></label><label class="field"><span>Finish</span><input type="time" id="m_f" value="${esc(prev?.finish || "15:30")}"></label></div>
+      <label class="field"><span>What you did (optional)</span><textarea id="m_did" rows="2" placeholder="e.g. Framing, hung the doors"></textarea></label>
+      <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Close</button><button class="btn" data-act="cuagain">Save, add another</button><button class="btn primary" data-act="modal-ok">Save</button></div>`,
+      () => { const d = mval("m_d"); if (!d) { toast("Pick the date."); return false; } return {date:d, start:mval("m_s"), finish:mval("m_f"), brk:mval("m_b"), did:mval("m_did").trim(), again:!!Store.cuAgain}; });
+    if (!ok) break;
+    const l = ensureLog(ok.date); l.entries = l.entries || [];
+    let e = l.entries.find(x => x.jobId === j.id) || l.entries.find(x => !x.jobId && !x.did);
+    if (!e) { e = {id:uid("e"), jobId:j.id, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
+    Object.assign(e, {jobId:j.id, site:(e.site || "").trim() || jobSite(j), start:ok.start, finish:ok.finish, breakMin:ok.brk === "" ? "" : num(ok.brk), did:ok.did || e.did || ""});
+    put(touch(l)); toast(`Saved ${dShort(ok.date)}, ${fmtH(entryHours(e))}.`);
+    if (!ok.again) break;
+    date = nextWorkday(ok.date);
+  }
+  render();
+}
+
 /* money */
 VIEWS.money = () => {
   const tab = UI.moneyTab;
@@ -1667,6 +1822,7 @@ VIEWS.settings = () => {
     <div class="card"><div class="head"><h2>Licences, insurance and renewals</h2><button class="btn sm" data-act="addrenew">${ic("plus")} Add</button></div>
       <p class="small muted" style="margin-top:0">The home screen warns you 30 days before anything here runs out.</p>
       <div class="stack" style="gap:8px">${(s.renewals || []).map((r, i) => `<div class="row" style="flex-wrap:nowrap"><input type="text" class="grow" ${K(`renewals.${i}.name`)} value="${esc(r.name)}" placeholder="e.g. Public liability insurance"><input type="date" style="width:170px;flex:none" ${K(`renewals.${i}.date`)} value="${esc(r.date)}" aria-label="Expiry date"><button class="x" data-act="rmrow" data-id="settings" data-p="renewals" data-i="${i}" aria-label="Remove">${ic("x")}</button></div>`).join("")}</div></div>
+    <div class="card"><div class="row between"><div><h2 style="margin:0">Catch-up guide</h2><p class="small muted" style="margin:4px 0 0">Step by step through what each job still needs.</p></div><button class="btn" data-act="cuopen">Open it</button></div></div>
     <div class="card"><h2>Backup</h2><p class="small muted" style="margin-top:0">${Store.mode === "cloud" ? (IS_PWA ? "Your data syncs between your phone and PC through your Google account." : "Your data is saved to your claude.ai account and syncs between your phone and PC.") + " A backup file is a good extra copy to keep once a month." : "Right now your data is only on this device. Save a backup file regularly."}</p>
       <div class="row"><button class="btn" data-act="backup">${ic("pdf")} Save backup file</button><button class="btn" data-act="restore">Restore from backup</button></div></div>
   </div>`;
@@ -1707,11 +1863,33 @@ function touch(d){ d.updated = new Date().toISOString(); return d; }
 function newJob(fields){ const s = S(); const j = touch({id:uid("job"), kind:"job", title:"", status:"lead", created:new Date().toISOString(), sections:[], rate:s.rate, markup:s.markup, contingency:s.contingency, ...fields}); put(j); return j; }
 function newClient(fields){ const c = {id:uid("cli"), kind:"client", name:"", phone:"", email:"", address:"", ...fields}; put(c); return c; }
 function ensureLog(d){ const id = "log_" + d; let l = getDoc(id); if (!l) { l = {id, kind:"log", date:d, entries:[], extras:[], km:"", weather:"", notes:""}; put(l); } return l; }
-function blankEntry(jobId){ const j = getDoc(jobId); const last = all("log").sort((a, b) => b.date.localeCompare(a.date))[0]; const le = last && (last.entries || [])[0]; return {id:uid("e"), jobId:jobId || "", site:j ? j.site || "" : "", start:le?.start || "07:00", finish:le?.finish || "15:30", breakMin:S().breakMin ?? 45, did:""}; }
+function blankEntry(jobId){ const j = getDoc(jobId); const last = all("log").sort((a, b) => b.date.localeCompare(a.date))[0]; const le = last && (last.entries || [])[0]; return {id:uid("e"), jobId:jobId || "", site:jobSite(j), start:le?.start || "07:00", finish:le?.finish || "15:30", breakMin:S().breakMin ?? 45, did:""}; }
 
 const ACT = {
   nav: d => nav(d.v), back: () => back(), go: d => go(d.v, d.id),
   tlopen: () => go("timeline"),
+  cuopen: () => { const s = S(); if (s.cuHide) { s.cuHide = false; put(s); } UI.cuOn = true; go("catchup"); },
+  cuback: () => go("catchup"),
+  cupilloff: () => { UI.cuOn = false; render(); },
+  cuhide: () => { const s = S(); s.cuHide = true; put(s); UI.cuOn = false; nav("home"); },
+  custatus: d => { const j = getDoc(d.id); j.status = d.s; j.cuOk = {...(j.cuOk || {}), status:true}; put(touch(j)); if (UI.cuStep === j.id + ":status") cuAdvance(UI.cuStep); render(); },
+  cuveh: d => { const s = S(); s.vehicle = d.v; put(s); render(); },
+  cusite: d => { const j = getDoc(d.id); j.site = (clientOf(j).address || "").trim(); put(touch(j)); render(); },
+  cuskip: d => { const [id, k] = d.key.split(":"); const doc = id === "setup" ? S() : getDoc(id); doc.cuSkip = {...(doc.cuSkip || {}), [k]:true}; put(id === "setup" ? doc : touch(doc)); cuAdvance(d.key); render(); window.scrollTo(0, 0); },
+  cuunskip: d => { const [id, k] = d.key.split(":"); const doc = id === "setup" ? S() : getDoc(id); if (doc.cuSkip) delete doc.cuSkip[k]; put(id === "setup" ? doc : touch(doc)); render(); },
+  culater: d => { (UI.cuLater = UI.cuLater || new Set()).add(d.key); cuAdvance(d.key); render(); window.scrollTo(0, 0); },
+  cunext: () => { cuAdvance(UI.cuStep); render(); window.scrollTo(0, 0); },
+  cugoto: d => { UI.cuStep = d.key; if (UI.cuLater) UI.cuLater.delete(d.key); render(); window.scrollTo(0, 0); },
+  cugo: d => go("job", d.id, d.v),
+  cudays: d => { const j = getDoc(d.id); if (j) cuDaysModal(j); },
+  cuagain: () => { Store.cuAgain = true; const v = Store.modalOk ? Store.modalOk() : true; if (v === false) { Store.cuAgain = false; return; } closeModal(v); },
+  cutrips: async d => {
+    const j = getDoc(d.id), s = S(), site = jobSite(j), days = j ? cuNoDrive(j) : []; if (!days.length || !s.home || !site) return;
+    toast("Working out the distance…"); let km = "";
+    try { km = await drivingKm(s.home, site); } catch(e){}
+    days.forEach(dt => { const l = getDoc("log_" + dt); (l.trips = l.trips || []).push({id:uid("tr"), from:s.home, to:site, why:"Travel to site and back", jobId:j.id, km, back:true, kmAuto:!!km}); put(touch(l)); });
+    render(); toast(km ? `Added a return trip on ${days.length} day${days.length === 1 ? "" : "s"}, ${round2(km * 2)} km each.` : `Added the trips, but couldn't work out the km right now. Open a day and tap Work out km.`);
+  },
   tlsnooze: () => { lsSet("bcj_tlsnooze", addDays(today(), 3)); render(); },
   tlfile: () => { const fp = $("#tlpick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) tlLoad(fs); }; fp.click(); },
   tlmonth: d => { TL.month = d.m; render(); window.scrollTo(0, 0); tlNames(); },
@@ -1876,7 +2054,7 @@ const ACT = {
   },
   async deltransfer(d){ if (await confirmBox("Remove this entry?", "", "Remove", true)) { del(d.id); render(); } },
   clockon: async () => { const t = today(); const l = ensureLog(t); const n = new Date(); const m = Math.round((n.getHours() * 60 + n.getMinutes()) / 5) * 5; const active = all("job").filter(j => j.status === "active"); const jid = active.length === 1 ? active[0].id : (l.entries[l.entries.length - 1]?.jobId || "");
-    let e = l.entries.find(x => !x.did && !x.invId && (!x.jobId || x.jobId === jid) && !(x.start && !x.finish)); if (!e) { e = blankEntry(jid); l.entries.push(e); } else if (!e.jobId && jid) { e.jobId = jid; e.site = e.site || getDoc(jid)?.site || ""; }
+    let e = l.entries.find(x => !x.did && !x.invId && (!x.jobId || x.jobId === jid) && !(x.start && !x.finish)); if (!e) { e = blankEntry(jid); l.entries.push(e); } else if (!e.jobId && jid) { e.jobId = jid; e.site = e.site || jobSite(getDoc(jid)); }
     e.start = pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); e.finish = ""; put(l); render(); toast("Clocked on at " + t12(e.start));
     if (S().autoDrive === false) return;
     // where are you? that picks the job if you're at one of your sites, and logs the drive here
@@ -1961,10 +2139,10 @@ async function eventModal(ev){
   const ok = await openModal(`<h2>${ev.id ? "Edit event" : "Add to calendar"}</h2>
     <label class="field"><span>What</span><input type="text" id="m_t" value="${esc(ev.title)}" placeholder="e.g. Measure up deck, timber delivery"></label>
     <div class="fields"><label class="field"><span>Type</span><select id="m_type">${EV_TYPES.map(([k, l]) => `<option value="${k}" ${ev.type === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <label class="field"><span>Job</span><select id="m_job">${jobOptions(ev.jobId, "None")}</select></label></div>
+      <label class="field"><span>Job</span><select id="m_job" data-ch="evjob">${jobOptions(ev.jobId, "None")}</select></label></div>
     <div class="fields"><label class="field"><span>Date</span><input type="date" id="m_date" value="${esc(ev.date)}"></label><label class="field"><span>Until (multi-day)</span><input type="date" id="m_end" value="${esc(ev.end_date)}"></label></div>
     <div class="fields"><label class="field"><span>Start time</span><input type="time" id="m_start" value="${esc(ev.start)}"></label><label class="field"><span>End time</span><input type="time" id="m_fin" value="${esc(ev.finish)}"></label></div>
-    <label class="field"><span>Where / notes</span><input type="text" id="m_where" data-sug="addr" autocomplete="off" value="${esc(ev.where)}"></label>
+    <label class="field"><span>Where / notes</span><input type="text" id="m_where" data-sug="addr" autocomplete="off" value="${esc(ev.where || (ev.id ? "" : jobSite(getDoc(ev.jobId))))}" ${!ev.where && !ev.id && jobSite(getDoc(ev.jobId)) ? 'data-auto="1"' : ""}></label>
     <div class="row between">${ev.id ? `<button class="btn danger" data-act="modal-del">Delete</button>` : "<span></span>"}<div class="row"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Save</button></div></div>`,
     () => { if (!mval("m_t").trim() && !mval("m_job")) { toast("Add what it's for, or pick a job."); return false; } return {title:mval("m_t").trim(), type:mval("m_type"), jobId:mval("m_job"), date:mval("m_date") || today(), end_date:mval("m_end") > mval("m_date") ? mval("m_end") : "", start:mval("m_start"), finish:mval("m_fin"), where:mval("m_where")}; });
   if (!ok) return;
