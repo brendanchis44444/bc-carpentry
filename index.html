@@ -255,8 +255,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 #cupill .btn{border-radius:99px}
 body.cu-on main{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
 @media (min-width:900px){#cupill{bottom:20px;left:calc(50% + 116px)}}
+.cusug{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line);background:var(--surface2);border-radius:10px;padding:12px;margin:0 0 10px}.cusug .check{align-items:flex-start}.cusug .check input{margin-top:2px;flex:none}
 .custeps{display:flex;flex-direction:column;gap:2px}.custeps button{display:flex;gap:10px;align-items:center;text-align:left;background:none;border:0;padding:6px 8px;border-radius:8px;font:inherit;font-size:.9rem;color:var(--muted);cursor:pointer}.custeps button span{width:16px;text-align:center;flex:none}.custeps button.ok{color:var(--ink)}.custeps button.on{background:var(--surface2);color:var(--ink);font-weight:600}
-.tlrow{display:flex;align-items:flex-start;gap:10px}.tlrow .check{align-items:flex-start;flex:1;min-width:0}.tlrow .check input{margin-top:1px;flex:none}.tlrow>.pill{flex:none;margin-top:1px}.tlrow>a{flex:none;padding-top:2px}.tlf{margin:-2px 0 4px 28px}.tlother summary{cursor:pointer;padding:2px 0}details.tlother{margin-top:8px}
+.tlrow{display:flex;align-items:flex-start;gap:10px}.tlrow .check{align-items:flex-start;flex:1;min-width:0}.tlrow .check input{margin-top:1px;flex:none}.tlrow>.pill{flex:none;margin-top:1px}.tlrow>a{flex:none;padding-top:2px}.tlf{margin:-2px 0 4px 28px}.tlname{margin:-6px 0 0 20px}.tlname .btn{text-align:left;white-space:normal;color:var(--muted)}.tlother summary{cursor:pointer;padding:2px 0}details.tlother{margin-top:8px}
 .tripkm{align-items:flex-end;gap:10px}.tripkm .field{width:130px}.tripkm .check{padding-bottom:9px}
 .jno{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
 .logoprev{min-width:110px;min-height:44px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:10px;padding:6px}.logoprev img{max-width:140px;max-height:60px}
@@ -594,7 +595,36 @@ function compressImage(file, maxSide, maxBytes, png){
     fr.onerror = rej; fr.readAsDataURL(file);
   });
 }
-function pickImages(){ return new Promise(res => { const fp = $("#multipick"); fp.value = ""; fp.onchange = async () => { const out = []; for (const f of fp.files) { try { out.push(await compressImage(f, 1400, 230000)); } catch(e){} } if (fp.files.length && !out.length) toast("Couldn't read those photos."); res(out); }; fp.click(); }); }
+/* when and where a photo was taken, from the details the camera saves inside it (read before it's made smaller,
+   which drops them). Gives {date, time, ll:[lat, lon] or null}, or null if the photo has none. */
+function exifFromBuf(buf){
+  try {
+    const v = new DataView(buf); if (v.getUint16(0) !== 0xFFD8) return null;
+    for (let o = 2; o + 10 < v.byteLength;) {
+      const m = v.getUint16(o); if ((m & 0xFF00) !== 0xFF00 || m === 0xFFDA) return null;
+      if (m === 0xFFE1 && v.getUint32(o + 4) === 0x45786966) return exifTiff(v, o + 10);
+      o += 2 + v.getUint16(o + 2);
+    }
+  } catch(e){}
+  return null;
+}
+function exifTiff(v, t){
+  const le = v.getUint16(t) === 0x4949, u16 = p => v.getUint16(p, le), u32 = p => v.getUint32(p, le);
+  const ifd = p => { const out = {}; const n = u16(p); for (let i = 0; i < n; i++) { const e = p + 2 + i * 12; out[u16(e)] = {n:u32(e + 4), at:e + 8}; } return out; };
+  const str = en => { const p = en.n > 4 ? t + u32(en.at) : en.at; let s = ""; for (let i = 0; i < en.n; i++) { const c = v.getUint8(p + i); if (!c) break; s += String.fromCharCode(c); } return s; };
+  const rat = (en, i) => { const p = t + u32(en.at) + i * 8; return u32(p) / (u32(p + 4) || 1); };
+  const ifd0 = ifd(t + u32(t + 4)); let when = "", ll = null;
+  if (ifd0[0x8769]) { const ex = ifd(t + u32(ifd0[0x8769].at)); const d = ex[0x9003] || ex[0x9004]; if (d) when = str(d); }
+  if (!when && ifd0[0x0132]) when = str(ifd0[0x0132]);
+  if (ifd0[0x8825]) { const g = ifd(t + u32(ifd0[0x8825].at));
+    if (g[2] && g[4]) { const dms = en => rat(en, 0) + rat(en, 1) / 60 + rat(en, 2) / 3600; let la = dms(g[2]), lo = dms(g[4]); if (g[1] && /S/i.test(str(g[1]))) la = -la; if (g[3] && /W/i.test(str(g[3]))) lo = -lo; if (la || lo) ll = [Math.round(la * 1e6) / 1e6, Math.round(lo * 1e6) / 1e6]; } }
+  const m = when.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d)/);
+  if (!m && !ll) return null;
+  return {date:m ? `${m[1]}-${m[2]}-${m[3]}` : "", time:m ? `${m[4]}:${m[5]}` : "", ll};
+}
+async function readExif(f){ try { return exifFromBuf(await f.slice(0, 262144).arrayBuffer()); } catch(e){ return null; } }
+/* several photos, each as {data, date, time, ll} with whatever the camera saved */
+function pickImages(){ return new Promise(res => { const fp = $("#multipick"); fp.value = ""; fp.onchange = async () => { const out = []; for (const f of fp.files) { try { const x = await readExif(f) || {}; out.push({data:await compressImage(f, 1400, 230000), date:x.date || "", time:x.time || "", ll:x.ll || null}); } catch(e){} } if (fp.files.length && !out.length) toast("Couldn't read those photos."); res(out); }; fp.click(); }); }
 function pickImage(){ return new Promise(res => { const fp = $("#filepick"); fp.value = ""; fp.onchange = async () => { const f = fp.files[0]; if (!f) return res(null); try { res(await compressImage(f, 1400, 230000)); } catch(e){ toast("Couldn't read that image."); res(null); } }; fp.click(); }); }
 
 /* ---------- domain calcs ---------- */
@@ -919,7 +949,8 @@ const CHANGE = {
   fy(el){ UI.fy = +el.value; render(); },
   evjob(el){ const w = $("#m_where"), site = jobSite(getDoc(el.value)); if (w && (!w.value.trim() || w.dataset.auto)) { w.value = site; if (site) w.dataset.auto = "1"; else delete w.dataset.auto; } },
   tl(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {}).on = el.checked; queueRender(); },
-  tlf(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {})[el.dataset.f] = el.value; }
+  tlf(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {})[el.dataset.f] = el.value; },
+  cutick(el){ (UI.cuTick = UI.cuTick || {})[el.dataset.key] = el.checked; queueRender(); }
 };
 document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.ch === "tlf") CHANGE.tlf(el); if (el.id === "m_where") delete el.dataset.auto; });
 document.addEventListener("input", e => { if (e.target.id === "clisearch") { UI.cliSearch = e.target.value; clearTimeout(UI._cs); UI._cs = setTimeout(render, 200); } });
@@ -970,7 +1001,7 @@ function jobVisit(j){
       <label class="field"><span>Met with</span><input type="text" ${K("visit.met")} value="${esc(v.met || "")}" placeholder="${esc(clientOf(j).name || "Who was there")}"></label>
     </div>${v.date ? "" : `<div class="row" style="margin-top:8px"><button class="btn sm" data-act="visittoday" data-id="${j.id}">I'm on site now</button><button class="btn sm" data-act="newevent" data-job="${j.id}" data-date="${today()}" data-type="quote">${ic("cal")} Book the visit</button></div>`}</div>
     <div class="card"><div class="head"><h2>Photos</h2><button class="btn primary" data-act="addimg" data-id="${j.id}">${ic("img")} Add photos</button></div>
-      ${ph.length ? `<div class="vphotos">${ph.map((im, i) => `<div class="vph"><img data-img="${im.id}" alt="" data-act="viewphoto" data-img2="${im.id}" data-cap="${esc(im.cap || "")}"><div class="stack" style="gap:6px;min-width:0;flex:1"><textarea class="auto" rows="1" ${K(`imgs.${i}.cap`)} placeholder="What's in this photo, measurements, issues…">${esc(im.cap || "")}</textarea><div class="row between"><label class="check small"><input type="checkbox" ${K(`imgs.${i}.onQuote`)} ${im.onQuote !== false ? "checked" : ""}> Show on quote</label><button class="btn ghost sm danger" data-act="rmimg" data-id="${j.id}" data-i="${i}">Remove</button></div></div></div>`).join("")}</div>` : `<div class="muted small">Take photos as you walk the site. You can pick several at once, and add a note to each one.</div>`}</div>
+      ${ph.length ? `<div class="vphotos">${ph.map((im, i) => `<div class="vph"><img data-img="${im.id}" alt="" data-act="viewphoto" data-img2="${im.id}" data-cap="${esc(im.cap || "")}"><div class="stack" style="gap:6px;min-width:0;flex:1"><textarea class="auto" rows="1" ${K(`imgs.${i}.cap`)} placeholder="What's in this photo, measurements, issues…">${esc(im.cap || "")}</textarea>${phTaken(j, im) ? `<div class="tiny muted">Taken ${dShort(im.date)}${im.time ? ", " + t12(im.time) : ""}</div>` : ""}<div class="row between"><label class="check small"><input type="checkbox" ${K(`imgs.${i}.onQuote`)} ${im.onQuote !== false ? "checked" : ""}> Show on quote</label><button class="btn ghost sm danger" data-act="rmimg" data-id="${j.id}" data-i="${i}">Remove</button></div></div></div>`).join("")}</div>` : `<div class="muted small">Take photos as you walk the site. You can pick several at once, and add a note to each one.</div>`}</div>
     <div class="card"><h2>Measurements</h2><textarea ${K("visit.measure")} placeholder="e.g. Opening 3.1m wide x 2.8m high. Deck area 4.8 x 3.6. Wall to be clad 1.7 x 2.8.">${esc(v.measure || "")}</textarea></div>
     <div class="card"><h2>What the client wants</h2><textarea ${K("visit.wants")} placeholder="Their words, finishes they like, budget, timing…">${esc(v.wants || "")}</textarea></div>
     <div class="card"><h2>Things to check</h2><div class="stack" style="gap:8px">${VISIT_CHECKS.map((c, i) => `<div class="vcheck"><label class="check"><input type="checkbox" ${K(`visit.checks.${i}.on`)} ${v.checks?.[i]?.on ? "checked" : ""}> ${esc(c)}</label>${v.checks?.[i]?.on ? `<input type="text" ${K(`visit.checks.${i}.note`)} value="${esc(v.checks?.[i]?.note || "")}" placeholder="Note">` : ""}</div>`).join("")}</div></div>
@@ -1249,7 +1280,7 @@ async function calcTrip(logId, tripId, quiet){
    read on this device and never saved; only stops that aren't a job site or home get their names looked up on OpenStreetMap. */
 const TL = { segs:null, drives:[], visits:[], files:"", month:"", picks:{}, sites:[], home:null, missing:0, busy:"", run:false, fail:new Set(), rt:0, sw:[] };
 const kmBetween = (a, b) => { const r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r; const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 12742 * Math.asin(Math.sqrt(h)); };
-const TL_SUPPLY = /bunnings|mitre ?10|total tools|sydney tools|tool ?kit depot|bowens|bretts|simmonds|dahlsens|home timber|hardware|timber|lumber|building supplies|blackwoods|reece|tradelink|plumbing|steel|dulux|haymes|taubmans|paint|landscape|soil|garden supplies|\btip\b|waste|recycl|transfer station|trade (centre|center|depot)|fastener|kennards|coates|\bhire\b|plywood|laminex|concrete|screws/i;
+const TL_SUPPLY = /bunnings|mitre ?10|\bnhs\b|\btools?\b|toolmart|suppl(y|ies)|joinery|\bdoors?\b|fixings|total tools|sydney tools|tool ?kit depot|bowens|bretts|simmonds|dahlsens|home timber|hardware|timber|lumber|building supplies|blackwoods|reece|tradelink|plumbing|steel|dulux|haymes|taubmans|paint|landscape|soil|garden supplies|\btip\b|waste|recycl|transfer station|trade (centre|center|depot)|fastener|kennards|coates|\bhire\b|plywood|laminex|concrete|screws/i;
 const hmR = d => { const m = Math.round((d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60) / 5) * 5; return pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); };
 function tlLL(v){
   if (v == null) return null;
@@ -1302,6 +1333,7 @@ function tlPlace(p){
   const near = TL.sites.filter(x => kmBetween(ll, x.ll) <= 0.25);
   if (near.length) return {kind:"job", jobIds:[...new Set(near.map(x => x.jobId))], label:near[0].site, named:true, key:"job:" + normAddr(near[0].site), ll};
   if (TL.home && kmBetween(ll, TL.home) <= 0.3 || /HOME/.test(p.sem || "")) return {kind:"home", label:S().home || "Home", named:true, key:"home", ll};
+  const mine = myPlace(ll); if (mine) return {kind:mine.work ? "supplier" : "other", label:mine.name, named:true, key:"pl:" + mine.ll.join(","), ll, mine:true};
   const key = tlKey(p), c = rgCache();
   const label = p.name ? [p.name, p.addr].filter(Boolean).join(", ") : c[key] || "";
   const low = label.toLowerCase();
@@ -1322,6 +1354,8 @@ const tlPick = x => { const p = TL.picks[x.key] || {}; return {on:p.on ?? x.def,
 function tlMonth(month){
   TL.sw = [...new Set(all("expense").map(e => supWord(e.supplier)).filter(Boolean))];
   const days = {}; const day = d => days[d] || (days[d] = {date:d, sites:{}, drives:[]});
+  // which jobs you took photos of each day, to help pick the job a drive was for
+  const ph = {}; all("job").forEach(j => photoDays(j).forEach(p => { if (p.date.slice(0, 7) === month) (ph[p.date] = ph[p.date] || []).push({id:j.id, n:p.n}); }));
   TL.visits.forEach(v => {
     const d = ymd(v.s); if (d.slice(0, 7) !== month || v.e - v.s < 10 * 60e3) return;
     const P = tlPlace(v); if (P.kind !== "job") return;
@@ -1338,12 +1372,16 @@ function tlMonth(month){
     const bought = P => exps.some(w => P.label.toLowerCase().includes(w));
     const sites = Object.values(D.sites);
     sites.forEach(x => { x.jobId = tlJob(x.jobIds, D.date); });
-    const dayJobs = [...new Set([...sites.map(x => x.jobId), ...ents.map(e => e.jobId).filter(Boolean)])];
+    D.ph = (ph[D.date] || []).filter(x => (getDoc(x.id) || {}).status !== "lost");
+    // the job a supplier run was for: a receipt from there that day, else the one job you were on, else the one you took photos of
+    const one = a => { const u = [...new Set(a)]; return u.length === 1 ? u[0] : ""; };
+    const onSite = [...sites.map(x => x.jobId), ...ents.map(e => e.jobId).filter(Boolean)], dayExp = all("expense").filter(e => e.date === D.date && e.jobId);
+    const guess = P => one(dayExp.filter(e => supWord(e.supplier) && P.label.toLowerCase().includes(supWord(e.supplier))).map(e => e.jobId)) || one(onSite) || (onSite.length ? "" : one(dayExp.map(e => e.jobId)) || one(D.ph.map(x => x.id)));
     const jobOf = P => tlJob(P.jobIds, D.date);
     D.drives.forEach(x => {
       const { A, B } = x;
       if (B.kind === "job") { x.jobId = jobOf(B); x.why = tlQuoteish(getDoc(x.jobId), D.date) ? "Quote visit" : "Travel to site"; }
-      else if (B.kind === "supplier" || A.kind === "supplier") { x.jobId = A.kind === "job" ? jobOf(A) : dayJobs.length === 1 ? dayJobs[0] : ""; x.why = bought(B.kind === "supplier" ? B : A) ? "Picking up materials" : "Supplier run"; }
+      else if (B.kind === "supplier" || A.kind === "supplier") { x.jobId = A.kind === "job" ? jobOf(A) : guess(B.kind === "supplier" ? B : A); x.why = bought(B.kind === "supplier" ? B : A) ? "Picking up materials" : "Supplier run"; }
       else if (A.kind === "job") { x.jobId = jobOf(A); x.why = B.kind === "home" ? "Travel home from site" : "Travel from site"; }
       x.work = !!x.why;
     });
@@ -1370,7 +1408,7 @@ function tlMonth(month){
       x.same = !!x.ent && Math.abs(mins(x.ent.start) - mins(x.start)) <= 15 && Math.abs(mins(x.ent.finish) - mins(x.finish)) <= 15; x.added = !!(x.ent && x.ent.tl) || x.same;
       x.def = !x.ent && !x.quote && x.e - x.s >= 60 * 60e3;
     });
-    D.work = sites.length > 0 || D.drives.some(x => x.work);
+    D.work = sites.length > 0 || D.drives.some(x => x.work) || D.ph.length > 0;
   });
   return Object.values(days).sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -1394,14 +1432,7 @@ async function tlNames(){
     for (;;) {
       const todo = tlNeedNames(); if (!todo.length || !navigator.onLine) break;
       TL.busy = `Looking up place names for stops (${todo.length} to go)…`; tlRedraw();
-      await Promise.all(todo.slice(0, 3).map(async P => {
-        try {
-          const d = await getJSON(`https://photon.komoot.io/reverse?lon=${P.ll[1]}&lat=${P.ll[0]}&limit=1&lang=en`, 8000);
-          const f = (d.features || [])[0], L = f && placeLabel(f); let label = L ? L.label : "";
-          if (label && L.ll && kmBetween(P.ll, [L.ll[1], L.ll[0]]) > 0.15) label = "Near " + label;
-          rgCache()[P.key] = label;
-        } catch(e){ TL.fail.add(P.key); }
-      }));
+      await Promise.all(todo.slice(0, 3).map(P => rgFetch(P.key, P.ll)));
       rgSave();
     }
   } finally { TL.run = false; TL.busy = ""; tlRedraw(true); }
@@ -1409,10 +1440,12 @@ async function tlNames(){
 VIEWS.timeline = () => {
   const s = S();
   const how = `<ol class="small" style="margin:6px 0 10px;padding-left:20px;line-height:1.5"><li>On your Android phone open <b>Settings</b>, then <b>Location</b>, <b>Location services</b>, <b>Timeline</b>, and tap <b>Export Timeline data</b>.</li><li>Save the file (Downloads is fine). It's called something like <b>Timeline.json</b>.</li><li>Tap <b>Choose Timeline file</b> below and pick it.</li></ol>`;
+  const pl = s.places || [];
+  const places = pl.length ? `<details class="card tlother"><summary class="small"><b>Places you've named</b> <span class="muted">(${pl.length})</span></summary><div class="list" style="margin-top:6px">${pl.map((x, i) => `<div class="item"><div class="main"><div class="t">${esc(x.name)}</div><div class="s">${x.work ? "Drives here are work" : "Not work"}</div></div><button class="btn ghost sm danger" data-act="tlunname" data-i="${i}">Forget</button></div>`).join("")}</div></details>` : "";
   const privacy = `<p class="tiny muted" style="margin-bottom:0">The file is only read on this device and isn't saved. To put names on stops (like Bunnings Kotara), their map spot is looked up on OpenStreetMap, and nothing else from it leaves your phone. Only what you tick goes into your day logs. Older Google Takeout location history files work too. Tip: in Timeline settings, turn off auto-delete so you still have it at tax time.</p>`;
   if (!TL.segs) return `<div class="stack"><div class="card"><h2>Fill your day logs from Google Timeline</h2>
     <p class="small" style="margin-top:0">Your phone's Timeline knows where you drove and how long you were at each job. Bring it in here and the app finds your trips and time on site, ticks the ones that look like work, and adds them to your day logs.</p>
-    ${how}<div class="row"><button class="btn primary" data-act="tlfile">Choose Timeline file</button></div>${TL.busy ? `<p class="small muted">${esc(TL.busy)}</p>` : ""}${privacy}</div></div>`;
+    ${how}<div class="row"><button class="btn primary" data-act="tlfile">Choose Timeline file</button></div>${TL.busy ? `<p class="small muted">${esc(TL.busy)}</p>` : ""}${privacy}</div>${places}</div>`;
   const months = [...new Set(TL.drives.map(r => ymd(r.s).slice(0, 7)).concat(TL.visits.map(v => ymd(v.s).slice(0, 7))))].sort().reverse();
   if (!months.includes(TL.month)) TL.month = months[0] || "";
   const days = TL.month ? tlMonth(TL.month) : [];
@@ -1426,8 +1459,11 @@ VIEWS.timeline = () => {
     const p = tlPick(x), txt = `${esc(tlShow(x.A))} to ${esc(tlShow(x.B))}`, sub = `${t12(hmR(x.s))} · ${x.km} km`;
     if (x.added) return `<div class="tlrow"><span class="pill paid">Added</span><span class="small grow">${txt}<span class="tiny muted" style="display:block">${sub}</span></span></div>`;
     return `<div class="tlrow ${p.on ? "on" : ""}"><label class="check"><input type="checkbox" data-ch="tl" data-key="${x.key}" ${p.on ? "checked" : ""}><span class="grow"><b class="small">${txt}</b><span class="tiny muted" style="display:block">${sub}${x.via ? " · quick stop on a work trip" : ""}${x.repl ? ` · replaces the drive logged at ${t12(x.repl.time)}${num(x.repl.km) ? ` (${num(x.repl.km)} km from ${esc(placeName(x.repl.from))})` : ""}` : ""}</span></span></label>${route(x) ? `<a class="tiny" href="${route(x)}" target="_blank" rel="noopener">Map</a>` : ""}</div>
+      ${tlNameBtn(x)}
       ${p.on ? `<div class="fields tlf"><label class="field"><span>Reason</span><input type="text" list="dl_why" id="tlw_${x.key}" data-ch="tlf" data-key="${x.key}" data-f="why" value="${esc(p.why)}" placeholder="e.g. Getting prices on materials"></label><label class="field"><span>Job</span><select data-ch="tlf" data-key="${x.key}" data-f="jobId">${jobOptions(p.jobId, "General business (no job)")}</select></label></div>` : ""}`;
   };
+  const tlNameBtn = x => { const P = x.B; if (!P.ll || ["job","home"].includes(P.kind) || P.kind === "supplier" && !P.mine) return "";
+    return `<div class="tlname"><button class="btn ghost sm" data-act="tlname" data-key="${x.key}" data-end="B">${P.mine ? `Change ${esc(shortAddr(P.label))}` : P.named ? `Is ${esc(shortAddr(P.label.replace(/^Near /, "")))} for work?` : "Name this stop"}</button></div>`; };
   const siteRow = x => {
     const p = tlPick(x), j = getDoc(p.jobId || x.jobId), hrs = round2((mins(x.finish) - mins(x.start) + 1440) % 1440 / 60);
     const sub = `${t12(x.start)} to ${t12(x.finish)}, ${fmtH(hrs)} there${x.quote ? " (looks like a quote visit)" : ""}`;
@@ -1439,6 +1475,7 @@ VIEWS.timeline = () => {
     const sites = Object.values(D.sites), main = D.drives.filter(x => x.work || x.added || tlPick(x).on), other = D.drives.filter(x => !main.includes(x));
     const km = round2(sum(D.drives.filter(x => x.added || tlPick(x).on), x => x.km));
     return `<div class="card tlday"><div class="head"><h3 style="margin:0">${dShort(D.date)}</h3><span class="small muted">${km ? km + " km for work" : ""}</span></div>
+      ${D.ph.length ? `<div class="tiny muted" style="margin:-2px 0 8px">Photos that day: ${D.ph.map(x => `${esc(jobLabel(getDoc(x.id)))} (${x.n})`).join(", ")}</div>` : ""}
       ${D.manual ? `<div class="note small" style="margin-bottom:8px">You already put driving in for this day${D.typedKm ? ` (${D.typedKm} km)` : ""}, so nothing is ticked.${D.typedKm ? " If you tick trips here, they replace that total." : " Only tick trips that aren't in your log yet."}</div>` : ""}
       <div class="stack" style="gap:8px">${sites.map(siteRow).join("")}${main.map(driveRow).join("")}${!sites.length && !main.length ? `<div class="small muted">No work found.</div>` : ""}</div>
       ${other.length ? `<details class="tlother"><summary class="small muted">${other.length} other drive${other.length === 1 ? "" : "s"} that don't look like work</summary><div class="stack" style="gap:8px;margin-top:8px">${other.map(driveRow).join("")}</div></details>` : ""}</div>`;
@@ -1456,7 +1493,7 @@ VIEWS.timeline = () => {
     ${work.map(dayCard).join("")}
     ${quiet.length ? `<details class="card tlother"><summary class="small"><b>${quiet.length} day${quiet.length === 1 ? "" : "s"}</b> <span class="muted">with no work found</span></summary><div class="stack" style="gap:10px;margin-top:10px">${quiet.map(dayCard).join("")}</div></details>` : ""}
     ${work.length > 2 ? `<div>${applyBtn}</div>` : ""}
-    ${privacy}
+    ${places}${privacy}
   </div>`;
 };
 async function tlLoad(files){
@@ -1521,6 +1558,105 @@ async function fillKm(l, t){
 }
 const placeName = a => a && normAddr(a) === normAddr(S().home) ? "home" : shortAddr(a);
 
+/* ---------- what your photos say ----------
+   Photos keep when they were taken, and usually where, so a job's photos show the day you went to look at it, the
+   days you worked on it and stops at a supplier. Photos added before the app read those details were dated the day
+   they were added, so a date only counts if the photo said when it was taken, or it's earlier than the job itself. */
+const phTaken = (j, im) => !!im.date && (!!im.taken || !!im.time || (!!j.created && im.date < j.created.slice(0, 10)));
+function photoDays(j){
+  const m = {};
+  (j.imgs || []).forEach(im => {
+    if (!phTaken(j, im)) return; const x = m[im.date] || (m[im.date] = {date:im.date, n:0, first:"", last:""});
+    x.n++; if (im.time) { if (!x.first || im.time < x.first) x.first = im.time; if (!x.last || im.time > x.last) x.last = im.time; }
+  });
+  return Object.values(m).sort((a, b) => a.date.localeCompare(b.date));
+}
+/* the first photos are from the visit, unless they're from after the quote went out */
+const photoVisit = j => { const d = (photoDays(j)[0] || {}).date || ""; return d && !(j.quoteDate && d > j.quoteDate) ? d : ""; };
+/* a place you've named yourself (see Name this place on the Google Timeline page) */
+const myPlace = ll => ll && (S().places || []).find(p => kmBetween(ll, p.ll) <= 0.2);
+/* the map spot of an address the app has already looked up, or start looking it up */
+const LLQ = new Set();
+function llOf(addr){
+  if (!(addr || "").trim()) return null; const c = geoCache()[normAddr(addr)]; if (c) return [c[1], c[0]];
+  if (!LLQ.has(addr) && navigator.onLine) { LLQ.add(addr); geocode(addr).then(() => { if (["catchup","timeline"].includes(UI.view)) queueRender(); }, () => {}); }
+  return null;
+}
+/* where most of the job's photos were taken; the photo album drafts saved it as a map link in the notes */
+function photoSpot(j){
+  const home = llOf(S().home), pts = (j.imgs || []).filter(im => im.ll && !(home && kmBetween(im.ll, home) < 0.3)).map(im => im.ll);
+  if (!pts.length) { const m = String(j.notes || "").match(/maps\.google\.com\/\?q=(-?\d+\.\d+),\s*(-?\d+\.\d+)/); return m ? [+m[1], +m[2]] : null; }
+  const g = {}; pts.forEach(ll => { const k = ll[0].toFixed(3) + "," + ll[1].toFixed(3); (g[k] = g[k] || []).push(ll); });
+  const big = Object.values(g).sort((a, b) => b.length - a.length)[0];
+  return [round6(sum(big, x => x[0]) / big.length), round6(sum(big, x => x[1]) / big.length)];
+}
+const round6 = x => Math.round(x * 1e6) / 1e6;
+/* names for map spots, looked up on OpenStreetMap a few at a time and kept on this device */
+const RGQ = { busy:false, q:new Map() };
+async function rgFetch(k, ll){
+  try {
+    const d = await getJSON(`https://photon.komoot.io/reverse?lon=${ll[1]}&lat=${ll[0]}&limit=1&lang=en`, 8000);
+    const f = (d.features || [])[0], L = f && placeLabel(f); let label = L ? L.label : "";
+    if (label && L.ll && kmBetween(ll, [L.ll[1], L.ll[0]]) > 0.15) label = "Near " + label;
+    rgCache()[k] = label;
+  } catch(e){ TL.fail.add(k); }
+}
+function rgName(ll){
+  const k = tlKey({ll}), c = rgCache(); if (k in c) return c[k]; if (TL.fail.has(k)) return "";
+  if (navigator.onLine) { RGQ.q.set(k, ll); rgRun(); } return undefined;
+}
+async function rgRun(){
+  if (RGQ.busy) return; RGQ.busy = true;
+  try { while (RGQ.q.size && navigator.onLine) { const batch = [...RGQ.q].slice(0, 3); batch.forEach(([k]) => RGQ.q.delete(k)); await Promise.all(batch.map(([k, ll]) => rgFetch(k, ll))); rgSave(); } }
+  finally { RGQ.busy = false; RGQ.q.clear(); if (["catchup","timeline"].includes(UI.view)) queueRender(); }
+}
+/* the nearest shop of that name, for a receipt that only says Bunnings */
+async function findNear(q, addr){
+  const c = await geocode(addr);
+  const d = await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=3&lang=en&lat=${c[1]}&lon=${c[0]}&bbox=112.9,-43.7,153.7,-10.6`, 8000);
+  const L = (d.features || []).map(f => placeLabel(f, q)).filter(Boolean).find(x => x.ll && kmBetween([x.ll[1], x.ll[0]], [c[1], c[0]]) < 40);
+  if (!L) return ""; geoRemember(L.label, L.ll); return L.label;
+}
+function usualHours(){
+  const es = logEntries().filter(e => e.start && e.finish), top = a => { const c = {}; a.forEach(x => c[x] = (c[x] || 0) + 1); return Object.keys(c).sort((x, y) => c[y] - c[x])[0]; };
+  return es.length ? {start:top(es.map(e => e.start)), finish:top(es.map(e => e.finish))} : {start:"07:00", finish:"15:30"};
+}
+const hm15 = (m, up) => { m = (up ? Math.ceil(m / 15) : Math.floor(m / 15)) * 15; return pad(Math.floor(m / 60) % 24) + ":" + pad(m % 60); };
+/* your usual hours, stretched to cover when the photos were taken */
+function sugHours(p, u){
+  let a = u.start, b = u.finish;
+  if (p && p.first && mins(p.first) < mins(a)) a = hm15(mins(p.first)); if (p && p.last && mins(p.last) > mins(b)) b = hm15(mins(p.last), true);
+  return {start:a, finish:b};
+}
+/* days the photos, driving and receipts say you were on the job, that aren't in your day logs yet */
+function cuDaySugs(j){
+  const have = new Set(cuDays(j)), v = (j.visit || {}).date, out = {}, now = today();
+  const day = d => d && !have.has(d) && d !== v && d <= now ? out[d] || (out[d] = {date:d, ph:null, trips:[], exps:[]}) : null;
+  photoDays(j).forEach(p => { const x = day(p.date); if (x) x.ph = p; });
+  all("log").forEach(l => (l.trips || []).forEach(t => { if (t.jobId === j.id && t.why !== "Quote visit") { const x = day(l.date); if (x) x.trips.push(t); } }));
+  all("expense").forEach(e => { if (e.jobId === j.id) { const x = day(e.date); if (x) x.exps.push(e); } });
+  return Object.values(out).sort((a, b) => a.date.localeCompare(b.date));
+}
+const cuSugOn = (j, x) => (UI.cuTick || {})[j.id + x.date] ?? (!!x.ph && !(j.quoteDate && x.date < j.quoteDate));
+/* supplier runs from receipts for this job and photos taken at a supplier, on days with no drive there logged */
+function cuSupplierSugs(j){
+  const out = [], home = llOf(S().home), site = llOf(jobSite(j)) || photoSpot(j);
+  const logged = (d, w) => { const l = getDoc("log_" + d); return ((l && l.trips) || []).some(t => ((t.to || "") + " " + (t.from || "")).toLowerCase().includes(w)); };
+  all("expense").forEach(e => {
+    if (e.jobId !== j.id || !e.date || !(e.supplier || "").trim()) return; const w = supWord(e.supplier);
+    if (!w || logged(e.date, w) || out.some(x => x.date === e.date && x.w === w)) return;
+    out.push({key:"e" + e.id, date:e.date, w, name:e.supplier.trim(), exp:e});
+  });
+  (j.imgs || []).forEach(im => {
+    if (!im.ll || !phTaken(j, im) || site && kmBetween(im.ll, site) < 0.3 || home && kmBetween(im.ll, home) < 0.3) return;
+    const mine = myPlace(im.ll), nm = mine ? mine.name : rgName(im.ll); if (!nm || !(mine ? mine.work : TL_SUPPLY.test(nm))) return;
+    const name = nm.replace(/^Near /, ""), w = supWord(name);
+    const same = out.find(x => x.date === im.date && (x.w === w || x.ll && kmBetween(x.ll, im.ll) < 0.3)); if (same) { if (!same.ll) Object.assign(same, {ll:im.ll, time:im.time, name}); return; }
+    if (!logged(im.date, w)) out.push({key:"p" + im.id, date:im.date, time:im.time, w, name, ll:im.ll});
+  });
+  return out.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
+}
+
 /* ---------- catch-up guide ----------
    Walks you through getting every job complete, one step at a time: your details, the basics for each job, Google
    Timeline, then each job's prices, days, driving, expenses and invoices. What's done is worked out from what's in
@@ -1541,8 +1677,10 @@ function cuSteps(){
   jobs.forEach(j => {
     js(j, 1, "status", "Where is this job at?", (j.cuOk || {}).status, {why:"Tap where it's up to now. Finished means the work's done, Paid means the money's in.", noskip:true});
     if (j.status === "lost") return;
+    js(j, 1, "photos", "Add your photos of this job", (j.imgs || []).length, {why:"Your photos show the day you looked at the job, the days you worked on it and where you went, so the next steps can fill those in for you.", skipTxt:"No photos"});
     js(j, 1, "client", "Who was it for?", j.clientId && getDoc(j.clientId), {why:"Search your clients, or type a new name to add them.", skipTxt:"No client"});
     js(j, 1, "site", "Where was the job?", (j.site || "").trim(), {why:"The site address fills in your day logs and driving for this job.", skipTxt:"No site"});
+    js(j, 1, "visit", "When did you go and look at it?", (j.visit || {}).date, {why:"The day you went to see the job and measure up. It's kept apart from the days you worked.", skipTxt:"No site visit"});
   });
   steps.push({key:"setup:tl", k:"tl", part:2, title:"Bring in your Google Timeline", done:!!s.tlLast, skipped:!!sk.tl, why:"It finds the days you were at each job site and your driving, so you don't have to type them in. Do it once now that your jobs have their addresses.", skipTxt:"I don't use Timeline"});
   jobs.forEach(j => {
@@ -1584,19 +1722,40 @@ function cuControls(x){
     case "tl": return `<button class="btn primary" data-act="tlopen">Open Google Timeline</button>`;
     case "status": return `<div class="chips">${STATUSES.map(([k, l]) => `<button class="chip ${(j.status || "lead") === k ? "on" : ""}" data-act="custatus" data-id="${j.id}" data-s="${k}">${l}</button>`).join("")}</div>`;
     case "client": return clientPicker({bind:`${j.id}|clientId`, value:j.clientId});
-    case "site": { const ca = (clientOf(j).address || "").trim(); return `<input type="text" ${JK("site")} data-sug="addr" autocomplete="off" value="${esc(j.site)}" placeholder="Street, suburb">${ca && !(j.site || "").trim() ? `<div style="margin-top:8px"><button class="btn sm" data-act="cusite" data-id="${j.id}">Same as ${esc(clientOf(j).name || "client")}'s address: ${esc(shortAddr(ca))}</button></div>` : ""}`; }
+    case "photos": { const n = (j.imgs || []).length, ds = photoDays(j), gps = (j.imgs || []).filter(im => im.ll).length;
+      return `${n ? `<p class="small" style="margin:0 0 8px"><b>${n} photo${n === 1 ? "" : "s"}</b>${ds.length ? `, taken on ${ds.length} day${ds.length === 1 ? "" : "s"} from ${dShort(ds[0].date)}${ds.length > 1 ? " to " + dShort(ds[ds.length - 1].date) : ""}` : ""}${gps ? `, ${gps} with where ${gps === 1 ? "it was" : "they were"} taken` : ""}.</p>` : ""}
+        <button class="btn primary" data-act="addimg" data-id="${j.id}">${ic("img")} ${n ? "Add more photos" : "Add photos"}</button>
+        <p class="tiny muted" style="margin:8px 0 0">Pick them all at once. The app reads the date, time and place each photo was taken.</p>`; }
+    case "site": { const ca = (clientOf(j).address || "").trim(), sp = !(j.site || "").trim() && photoSpot(j), nm = sp ? rgName(sp) : "";
+      return `<input type="text" ${JK("site")} data-sug="addr" autocomplete="off" value="${esc(j.site)}" placeholder="Street, suburb">${ca && !(j.site || "").trim() ? `<div style="margin-top:8px"><button class="btn sm" data-act="cusite" data-id="${j.id}">Same as ${esc(clientOf(j).name || "client")}'s address: ${esc(shortAddr(ca))}</button></div>` : ""}
+        ${sp ? `<div class="row" style="margin-top:8px">${nm ? `<button class="btn sm" data-act="cusitephoto" data-id="${j.id}" data-v="${esc(nm.replace(/^Near /, ""))}">Your photos were taken ${/^Near /.test(nm) ? "near" : "at"} ${esc(nm.replace(/^Near /, ""))}</button>` : `<span class="small muted">${nm === undefined ? "Looking up where your photos were taken…" : "Your photos show where it was."}</span>`}<a class="small" href="https://www.google.com/maps/search/?api=1&query=${sp[0]},${sp[1]}" target="_blank" rel="noopener">See it on the map</a></div>` : ""}`; }
+    case "visit": { const pv = photoVisit(j), v = j.visit || {};
+      return `<label class="field" style="max-width:220px"><span>Went to look on</span><input type="date" ${JK("visit.date")} value="${esc(v.date || "")}"></label>${pv && !v.date ? `<div style="margin-top:8px"><button class="btn sm" data-act="cuvisit" data-id="${j.id}" data-d="${pv}">${dShort(pv)}, the day of your first photos</button></div>` : ""}`; }
     case "prices": { const miss = cuNoPrice(j); return `<p class="small" style="margin:0 0 8px">${quoteCalc(j).total > 0 ? `Quote total so far <b>${money2(quoteCalc(j).total)}</b>.` : "No prices on it yet."}${miss.length ? ` ${miss.length} material${miss.length === 1 ? " has" : "s have"} no price: ${esc(miss.slice(0, 4).map(m => m.text.trim()).join(", "))}${miss.length > 4 ? "…" : ""}.` : ""}</p><button class="btn primary" data-act="cugo" data-v="plan" data-id="${j.id}">Open the job's plan</button>`; }
     case "qdate": return `<label class="field" style="max-width:220px"><span>Quote sent on</span><input type="date" ${JK("quoteDate")} value="${esc(j.quoteDate)}"></label>`;
-    case "days": { const ds = cuDays(j), h = sum(logEntries().filter(e => e.jobId === j.id), entryHours); return `${ds.length ? `<p class="small" style="margin:0 0 8px"><b>${ds.length} day${ds.length === 1 ? "" : "s"}</b> logged, ${fmtH(h)} in total, ${dShort(ds[0])}${ds.length > 1 ? " to " + dShort(ds[ds.length - 1]) : ""}.</p>` : ""}<div class="row"><button class="btn primary" data-act="cudays" data-id="${j.id}">${ds.length ? "Add more days" : "Add the days you worked"}</button>${S().tlLast ? "" : `<button class="btn" data-act="tlopen">Use Google Timeline</button>`}</div>`; }
+    case "days": { const ds = cuDays(j), h = sum(logEntries().filter(e => e.jobId === j.id), entryHours), sg = cuDaySugs(j), u = usualHours(), nOn = sg.filter(x => cuSugOn(j, x)).length;
+      const why = x => [x.ph ? `${x.ph.n} photo${x.ph.n === 1 ? "" : "s"}${x.ph.first ? `, ${t12(x.ph.first)}${x.ph.last !== x.ph.first ? " to " + t12(x.ph.last) : ""}` : ""}` : "", ...x.trips.map(t => `drove to ${esc(placeName(t.to) || "a stop")}`), ...x.exps.map(e => `${esc(e.supplier || "a")} receipt`)].filter(Boolean).join(" · ");
+      const sugs = sg.length ? `<div class="cusug"><b class="small">Days your photos${sg.some(x => x.trips.length) ? ", driving" : ""}${sg.some(x => x.exps.length) ? " and receipts" : ""} point to</b>
+        ${sg.map(x => { const hh = sugHours(x.ph, u); return `<label class="check"><input type="checkbox" data-ch="cutick" data-key="${j.id + x.date}" ${cuSugOn(j, x) ? "checked" : ""}><span class="grow"><b class="small">${dShort(x.date)}</b><span class="tiny muted" style="display:block">${why(x)}. Adds ${t12(hh.start)} to ${t12(hh.finish)}${j.quoteDate && x.date < j.quoteDate ? ", but it's before the quote" : ""}.</span></span></label>`; }).join("")}
+        <div class="row"><button class="btn primary" data-act="cuaddsug" data-id="${j.id}" ${nOn ? "" : "disabled"}>Add ${nOn ? nOn + " ticked day" + (nOn === 1 ? "" : "s") : "ticked days"}</button></div>
+        <p class="tiny muted" style="margin:0">Hours are your usual ${t12(u.start)} to ${t12(u.finish)}, stretched if photos were taken earlier or later. Change any day in the day log.</p></div>` : "";
+      return `${ds.length ? `<p class="small" style="margin:0 0 8px"><b>${ds.length} day${ds.length === 1 ? "" : "s"}</b> logged, ${fmtH(h)} in total, ${dShort(ds[0])}${ds.length > 1 ? " to " + dShort(ds[ds.length - 1]) : ""}.</p>` : ""}${sugs}<div class="row"><button class="btn ${sg.length ? "" : "primary"}" data-act="cudays" data-id="${j.id}">${sg.length ? "Add a day by hand" : ds.length ? "Add more days" : "Add the days you worked"}</button>${S().tlLast ? "" : `<button class="btn" data-act="tlopen">Use Google Timeline</button>`}</div>`; }
     case "drive": { const ds = cuDays(j), miss = cuNoDrive(j), site = jobSite(j); if (!ds.length) return `<p class="small muted" style="margin:0">Add the days you worked first.</p>`;
       return `<p class="small" style="margin:0 0 8px">${miss.length ? `<b>${miss.length} of ${ds.length} day${ds.length === 1 ? "" : "s"}</b> on this job ${miss.length === 1 ? "has" : "have"} no driving yet.` : "Every day on this job has its driving."}</p>
         <div class="row">${miss.length && s.home && site ? `<button class="btn primary" data-act="cutrips" data-id="${j.id}">Add home to site and back for ${miss.length === 1 ? "that day" : `those ${miss.length} days`}</button>` : ""}<button class="btn" data-act="tlopen">Use Google Timeline</button></div>
-        ${!s.home || !site ? `<p class="tiny muted" style="margin:6px 0 0">Add ${!s.home ? "your home address" : "the job's site address"} and this can fill in the trips for you.</p>` : ""}`; }
+        ${!s.home || !site ? `<p class="tiny muted" style="margin:6px 0 0">Add ${!s.home ? "your home address" : "the job's site address"} and this can fill in the trips for you.</p>` : ""}${cuSupHtml(j)}`; }
     case "exp": { const n = all("expense").filter(e => e.jobId === j.id).length; return `${n ? `<p class="small" style="margin:0 0 8px">${n} expense${n === 1 ? "" : "s"} so far.</p>` : ""}<button class="btn primary" data-act="newexp" data-job="${j.id}" data-date="${esc(cuDays(j)[0] || j.start || today())}">Add an expense for this job</button>`; }
     case "inv": return `<button class="btn primary" data-act="newinv" data-job="${j.id}">Create the invoice</button>`;
     case "paid": return `<div class="stack" style="gap:6px">${all("invoice").filter(i => i.jobId === j.id).map(i => `<div class="row between"><span class="small">${esc(i.number || "Invoice")} · ${money2(invTotal(i))}</span>${i.status === "paid" ? `<span class="pill paidinv">Paid ${esc(dAU(i.paidDate))}</span>` : `<button class="btn sm" data-act="go" data-v="invoice" data-id="${i.id}">Open it</button>`}</div>`).join("")}</div>`;
   }
   return "";
+}
+function cuSupHtml(j){
+  const ss = cuSupplierSugs(j); if (!ss.length) return "";
+  const on = x => (UI.cuTick || {})[j.id + x.key] ?? true, n = ss.filter(on).length, worked = new Set(cuDays(j));
+  return `<div class="cusug" style="margin-top:12px"><b class="small">Supplier runs from your ${ss.some(x => x.exp) ? "receipts" : ""}${ss.some(x => x.exp) && ss.some(x => !x.exp) ? " and " : ""}${ss.some(x => !x.exp) ? "photos" : ""}</b>
+    ${ss.map(x => `<label class="check"><input type="checkbox" data-ch="cutick" data-key="${j.id + x.key}" ${on(x) ? "checked" : ""}><span class="grow"><b class="small">${esc(shortAddr(x.name))}, ${dShort(x.date)}</b><span class="tiny muted" style="display:block">${x.exp ? `${money2(x.exp.amount)} receipt` : `Photo taken there${x.time ? " at " + t12(x.time) : ""}`}. Adds a trip from ${worked.has(x.date) ? "the site" : "home"} and back.</span></span></label>`).join("")}
+    <div class="row"><button class="btn primary" data-act="cusupruns" data-id="${j.id}" ${n ? "" : "disabled"}>Add ${n || ""} supplier run${n === 1 ? "" : "s"}</button></div></div>`;
 }
 VIEWS.catchup = () => {
   UI.cuOn = true;
@@ -1882,6 +2041,32 @@ const ACT = {
   cugoto: d => { UI.cuStep = d.key; if (UI.cuLater) UI.cuLater.delete(d.key); render(); window.scrollTo(0, 0); },
   cugo: d => go("job", d.id, d.v),
   cudays: d => { const j = getDoc(d.id); if (j) cuDaysModal(j); },
+  cusitephoto: d => { const j = getDoc(d.id); j.site = d.v; put(touch(j)); render(); toast("Check the house number is right."); },
+  cuvisit: d => { const j = getDoc(d.id), p = photoDays(j).find(x => x.date === d.d); j.visit = {...(j.visit || {}), date:d.d}; if (p && p.first && !j.visit.time) j.visit.time = hm15(mins(p.first)); put(touch(j)); if (UI.cuStep === j.id + ":visit") cuAdvance(UI.cuStep); render(); },
+  cuaddsug: d => {
+    const j = getDoc(d.id), u = usualHours(), brk = S().breakMin ?? 45; let n = 0;
+    cuDaySugs(j).filter(x => cuSugOn(j, x)).forEach(x => {
+      const h = sugHours(x.ph, u), l = ensureLog(x.date); l.entries = l.entries || [];
+      let e = l.entries.find(y => y.jobId === j.id) || l.entries.find(y => !y.jobId && !y.did);
+      if (!e) { e = {id:uid("e"), jobId:j.id, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
+      Object.assign(e, {jobId:j.id, site:(e.site || "").trim() || jobSite(j), start:h.start, finish:h.finish, breakMin:(mins(h.finish) - mins(h.start)) >= 300 ? brk : 0});
+      put(touch(l)); n++;
+    });
+    render(); toast(`Added ${n} day${n === 1 ? "" : "s"}. Tap a day in the day log to change the hours.`);
+  },
+  cusupruns: async d => {
+    const j = getDoc(d.id), s = S(), site = jobSite(j), tk = UI.cuTick || {}, worked = new Set(cuDays(j));
+    const list = cuSupplierSugs(j).filter(x => tk[j.id + x.key] ?? true); if (!list.length) return;
+    toast("Working out the distances…"); let n = 0, km = 0;
+    for (const x of list) {
+      const from = worked.has(x.date) && site ? site : s.home || site; let to = x.name;
+      if (!x.ll && from) { try { to = await findNear(x.name, from) || to; } catch(e){} }
+      let k = ""; if (from) { try { k = await drivingKm(from, x.ll ? `${x.ll[0]}, ${x.ll[1]}` : to); } catch(e){} }
+      const l = ensureLog(x.date); (l.trips = l.trips || []).push({id:uid("tr"), from, to, why:"Picking up materials", jobId:j.id, km:k, back:true, kmAuto:!!k, ...(x.time ? {time:x.time} : {})});
+      put(touch(l)); n++; km += num(k) * 2;
+    }
+    render(); toast(`Added ${n} supplier run${n === 1 ? "" : "s"}${km ? `, ${round2(km)} km` : ""}. Check them in the day log.`);
+  },
   cuagain: () => { Store.cuAgain = true; const v = Store.modalOk ? Store.modalOk() : true; if (v === false) { Store.cuAgain = false; return; } closeModal(v); },
   cutrips: async d => {
     const j = getDoc(d.id), s = S(), site = jobSite(j), days = j ? cuNoDrive(j) : []; if (!days.length || !s.home || !site) return;
@@ -1890,6 +2075,19 @@ const ACT = {
     days.forEach(dt => { const l = getDoc("log_" + dt); (l.trips = l.trips || []).push({id:uid("tr"), from:s.home, to:site, why:"Travel to site and back", jobId:j.id, km, back:true, kmAuto:!!km}); put(touch(l)); });
     render(); toast(km ? `Added a return trip on ${days.length} day${days.length === 1 ? "" : "s"}, ${round2(km * 2)} km each.` : `Added the trips, but couldn't work out the km right now. Open a day and tap Work out km.`);
   },
+  tlname: async d => {
+    const x = tlMonth(TL.month).flatMap(D => D.drives).find(y => y.key === d.key), P = x && x[d.end]; if (!P || !P.ll) return;
+    const ok = await openModal(`<h2>What's this place?</h2><p class="small muted" style="margin:0">${esc(tlShow(P))} · <a href="https://www.google.com/maps/search/?api=1&query=${P.ll[0]},${P.ll[1]}" target="_blank" rel="noopener">See it on the map</a></p>
+      <label class="field"><span>Name</span><input type="text" id="m_pn" value="${esc(P.named ? P.label.replace(/^Near /, "") : "")}" placeholder="e.g. Bunnings Kotara, NHS, the tip"></label>
+      <label class="check"><input type="checkbox" id="m_pw" ${P.kind === "supplier" ? "checked" : ""}> Drives here are for work, like a supplier, tool shop, timber yard or the tip</label>
+      <p class="tiny muted" style="margin:0">The app remembers this, so drives here get this name, and are ticked as work if you said so, every time you bring in your Timeline.</p>
+      <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Save</button></div>`,
+      () => { const n = mval("m_pn").trim(); if (!n) { toast("Give it a name."); return false; } return {name:n, work:$("#m_pw").checked}; });
+    if (!ok) return; const s = S(), ll = P.mine ? myPlace(P.ll).ll : P.ll;
+    s.places = (s.places || []).filter(q => kmBetween(q.ll, ll) > 0.2).concat([{ll, name:ok.name, work:ok.work}]); put(s);
+    render(); toast(ok.work ? `Drives to ${ok.name} now count as work.` : `Saved ${ok.name}.`);
+  },
+  tlunname: d => { const s = S(); s.places = (s.places || []).filter((x, i) => i !== +d.i); put(s); render(); },
   tlsnooze: () => { lsSet("bcj_tlsnooze", addDays(today(), 3)); render(); },
   tlfile: () => { const fp = $("#tlpick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) tlLoad(fs); }; fp.click(); },
   tlmonth: d => { TL.month = d.m; render(); window.scrollTo(0, 0); tlNames(); },
@@ -2000,7 +2198,9 @@ const ACT = {
   install: async () => { if (!INSTALL.ev) return; INSTALL.ev.prompt(); try { await INSTALL.ev.userChoice; } catch(e){} INSTALL.ev = null; render(); },
   addpl: () => { const s = S(); (s.pricelist = s.pricelist || []).push({id:uid("pl"), name:"", unit:"each", price:"", supplier:"Bunnings", updated:today()}); put(s); render(); },
   addpb: () => { const s = S(); s.pricebook = s.pricebook || []; s.pricebook.push({id:uid("pb"), name:"", unit:"each", hpu:1, mpu:0}); put(s); render(); },
-  async addimg(d){ const list = await pickImages(); if (!list.length) return; toast(`Saving ${list.length} photo${list.length === 1 ? "" : "s"}…`); const j = getDoc(d.id); j.imgs = j.imgs || []; for (const data of list) { const id = await imgPut(data); j.imgs.push({id, cap:"", date:today(), onQuote:!!d.q}); } put(touch(j)); render(); toast("Photos saved"); },
+  async addimg(d){ const list = await pickImages(); if (!list.length) return; toast(`Saving ${list.length} photo${list.length === 1 ? "" : "s"}…`); const j = getDoc(d.id); j.imgs = j.imgs || []; let dated = 0, placed = 0;
+    for (const x of list) { const id = await imgPut(x.data), im = {id, cap:"", date:x.date || today(), onQuote:!!d.q}; if (x.date) { im.time = x.time; im.taken = true; dated++; } if (x.ll) { im.ll = x.ll; placed++; } j.imgs.push(im); }
+    put(touch(j)); render(); toast(dated ? `Photos saved. ${dated === list.length ? "All" : dated} had the date taken${placed ? `, ${placed === list.length ? "all" : placed} with where` : ""}.` : "Photos saved"); },
   async rmimg(d){ const j = getDoc(d.id); const [im] = j.imgs.splice(+d.i, 1); put(j); imgDel(im.id); render(); },
   quotepdf: async d => { const j = getDoc(d.id); if (!j.quoteNo) { j.quoteNo = nextNo("q"); put(j); } if (!j.quoteDate) { j.quoteDate = today(); put(j); } await savePdf(quotePaper(j), `Quote ${j.quoteNo} ${clientOf(j).name || j.title}.pdf`); },
   quotemsg: d => { const j = getDoc(d.id), c = clientOf(j), q = quoteCalc(j), s = S(); copyText(`Hi ${(c.name || "there").split(" ")[0]},\n\nThanks for having me out to look at the job. Please find attached my quote ${j.quoteNo || ""} for ${j.title || "the work"}${j.site ? " at " + j.site : ""}.\n\nThe total comes to ${money2(q.total)}${q.tbc ? " plus a few items marked TBC that I'll price once confirmed" : ""}. No GST applies as I'm not registered for GST. The quote is valid for ${j.validDays ?? s.validDays} days.\n\nHappy to answer any questions. Just reply here or give me a call on ${s.phone}.\n\nCheers,\n${s.name.split(" ")[0]}\n${s.trading}`); },
@@ -2300,7 +2500,8 @@ async function searchPlaces(q){
 }
 async function geocode(addr){
   const m = String(addr || "").match(/^\s*(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)\s*$/); if (m) return [+m[2], +m[1]];
-  const k = normAddr(addr); const c = geoCache(); if (c[k]) return c[k];
+  const k = normAddr(addr), mine = (S().places || []).find(p => normAddr(p.name) === k); if (mine) return [mine.ll[1], mine.ll[0]];
+  const c = geoCache(); if (c[k]) return c[k];
   const d = await getJSON(photonUrl(addr, 1), 8000); const f = (d.features || [])[0];
   if (!f || !f.geometry) throw new Error(`Couldn't find "${addr}" on the map.`);
   geoRemember(addr, f.geometry.coordinates); return f.geometry.coordinates;
@@ -2314,7 +2515,7 @@ async function drivingKm(from, to){
 }
 const gmapsDir = (from, to) => `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from || "")}&destination=${encodeURIComponent(to || "")}&travelmode=driving`;
 const SUG = { el:null, box:null, items:[], idx:-1, seq:0, t:0, mute:false };
-function pastAddresses(){ const set = new Set(); all("client").forEach(c => c.address && set.add(c.address)); all("job").forEach(j => j.site && set.add(j.site)); all("log").forEach(l => (l.entries || []).forEach(e => e.site && set.add(e.site))); all("event").forEach(e => e.where && set.add(e.where)); set.delete("Various"); return [...set]; }
+function pastAddresses(){ const set = new Set(); all("client").forEach(c => c.address && set.add(c.address)); all("job").forEach(j => j.site && set.add(j.site)); all("log").forEach(l => (l.entries || []).forEach(e => e.site && set.add(e.site))); all("event").forEach(e => e.where && set.add(e.where)); (S().places || []).forEach(p => set.add(p.name)); set.delete("Various"); return [...set]; }
 /* client picker: type part of a name, phone number or street to find a client, so a long client list stays quick */
 function clientPicker({id, bind, value, ch, placeholder}){
   const c = getDoc(value);
