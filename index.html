@@ -255,6 +255,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 #cupill .btn{border-radius:99px}
 body.cu-on main{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
 @media (min-width:900px){#cupill{bottom:20px;left:calc(50% + 116px)}}
+.psthumbs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.psthumbs img{width:64px;height:64px;object-fit:cover;border-radius:6px;background:var(--surface2)}.psthumbs img.dup{opacity:.35}
+.rbimg{width:72px;height:96px;object-fit:cover;border-radius:6px;flex:none;background:var(--surface2)}.rbc.off{opacity:.65}
 .cusug{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line);background:var(--surface2);border-radius:10px;padding:12px;margin:0 0 10px}.cusug .check{align-items:flex-start}.cusug .check input{margin-top:2px;flex:none}
 .custeps{display:flex;flex-direction:column;gap:2px}.custeps button{display:flex;gap:10px;align-items:center;text-align:left;background:none;border:0;padding:6px 8px;border-radius:8px;font:inherit;font-size:.9rem;color:var(--muted);cursor:pointer}.custeps button span{width:16px;text-align:center;flex:none}.custeps button.ok{color:var(--ink)}.custeps button.on{background:var(--surface2);color:var(--ink);font-weight:600}
 .tlrow{display:flex;align-items:flex-start;gap:10px}.tlrow .check{align-items:flex-start;flex:1;min-width:0}.tlrow .check input{margin-top:1px;flex:none}.tlrow>.pill{flex:none;margin-top:1px}.tlrow>a{flex:none;padding-top:2px}.tlf{margin:-2px 0 4px 28px}.tlname{margin:-6px 0 0 20px}.tlname .btn{text-align:left;white-space:normal;color:var(--muted)}.tlother summary{cursor:pointer;padding:2px 0}details.tlother{margin-top:8px}
@@ -793,7 +795,10 @@ function setPath(o, path, v){ const ps = path.split("."); let c = o; for (let i 
 function readInput(el){ if (el.type === "checkbox") return el.checked; if (el.dataset.t === "num" || el.type === "number") return el.value === "" ? "" : num(el.value); return el.value; }
 function onBind(el, final){
   const [id, path] = el.dataset.k.split("|"); const doc = Store.docs[id]; if (!doc) return;
-  setPath(doc, path, readInput(el)); put(doc);
+  setPath(doc, path, readInput(el));
+  // once you change a guessed day or trip yourself, it's yours and Google Timeline leaves it alone
+  const m = doc.kind === "log" && path.match(/^(entries|trips)\.(\d+)\./); if (m && doc[m[1]][+m[2]]) delete doc[m[1]][+m[2]].est;
+  put(doc);
   if (final || el.dataset.live) { const fn = el.dataset.after && AFTER[el.dataset.after]; if (fn) fn(doc, el); queueRender(); }
 }
 /* Leaving a field (tapping the next one, or a button) fires "change" before the tap lands. Redrawing straight
@@ -836,11 +841,11 @@ document.addEventListener("pointerdown", e => { bgDown = e.target; }, true);
 
 /* ---------- render ---------- */
 const NAV = [["home","Home","home"],["jobs","Jobs","jobs"],["calendar","Calendar","cal"],["log","Day log","log"],["money","Money","money"]];
-const navOf = v => ({catchup:"home", timeline:"log", job:"jobs", quote:"jobs", clients:"jobs", client:"jobs", invoice:"money", settings:"settings", estimator:"jobs"}[v] || v);
+const navOf = v => ({catchup:"home", timeline:"log", photosort:"jobs", receipts:"money", job:"jobs", quote:"jobs", clients:"jobs", client:"jobs", invoice:"money", settings:"settings", estimator:"jobs"}[v] || v);
 function title(){
   if (UI.view === "job") { const j = getDoc(UI.id); return j ? jobLabel(j) : "Job"; }
   if (UI.view === "invoice") { const i = getDoc(UI.id); return i ? "Invoice " + (i.number || "") : "Invoice"; }
-  return ({home:bizName(), jobs:"Jobs", calendar:"Calendar", log:"Day log", money:"Money", settings:"Settings", clients:"Clients", client:"Client", timeline:"Google Timeline", catchup:"Catch up"}[UI.view]) || bizName();
+  return ({home:bizName(), jobs:"Jobs", calendar:"Calendar", log:"Day log", money:"Money", settings:"Settings", clients:"Clients", client:"Client", timeline:"Google Timeline", catchup:"Catch up", photosort:"Sort photos", receipts:"Receipts"}[UI.view]) || bizName();
 }
 let renderQueued = false, RENDERING = false;
 function render(){
@@ -962,7 +967,7 @@ VIEWS.jobs = () => {
   const chip = (k, l) => `<button class="chip ${f === k ? "on" : ""}" data-act="jobfilter" data-f="${k}">${l} ${counts[k] ? `<span class="num">${counts[k]}</span>` : ""}</button>`;
   return `<div class="stack">
   <div class="row between"><div class="row grow"><input type="text" id="jobsearch" placeholder="Search jobs, clients, addresses" value="${esc(UI.jobSearch)}" data-ch="jobsearch" style="max-width:420px"></div>
-    <div class="row"><button class="btn" data-act="go" data-v="clients">${ic("users")} Clients</button><button class="btn primary" data-act="newjob">${ic("plus")} New job</button></div></div>
+    <div class="row"><button class="btn" data-act="go" data-v="clients">${ic("users")} Clients</button><button class="btn" data-act="psopen">${ic("img")} Sort photos</button><button class="btn primary" data-act="newjob">${ic("plus")} New job</button></div></div>
   <div class="chips">${chip("open","Open")}${chip("lead","Leads")}${chip("quoted","Quoted")}${chip("active","Won / on the go")}${chip("done","Finished")}${chip("closed","Paid / lost")}${chip("all","All")}</div>
   <div class="card" style="padding:4px 12px"><div class="list">${jobs.length ? jobs.map(j => jobItem(j)).join("") : `<div class="empty">No jobs here. Tap <b>New job</b> to start one from a phone call or site visit.</div>`}</div></div>
   </div>`;
@@ -974,6 +979,10 @@ const CHANGE = {
   evjob(el){ const w = $("#m_where"), site = jobSite(getDoc(el.value)); if (w && (!w.value.trim() || w.dataset.auto)) { w.value = site; if (site) w.dataset.auto = "1"; else delete w.dataset.auto; } },
   tl(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {}).on = el.checked; queueRender(); },
   tlf(el){ const k = el.dataset.key; (TL.picks[k] = TL.picks[k] || {})[el.dataset.f] = el.value; },
+  psjob(el){ PS.pick[el.dataset.key] = el.value; queueRender(); },
+  rbf(el){ const r = RB.list.find(x => x.id === el.dataset.id); if (!r) return; const f = el.dataset.f;
+    r[f] = f === "on" ? el.checked : f === "amount" ? (el.value === "" ? "" : round2(num(el.value))) : el.value;
+    if (f === "jobId") r.jobSet = true; if (f === "date") { r.dateFrom = "you"; if (!r.jobSet) r.jobId = ""; } if (f === "on") r.dupWas = r.dup; queueRender(); },
   cutick(el){ (UI.cuTick = UI.cuTick || {})[el.dataset.key] = el.checked; queueRender(); }
 };
 document.addEventListener("input", e => { const el = e.target; if (el.dataset && el.dataset.ch === "tlf") CHANGE.tlf(el); if (el.id === "m_where") delete el.dataset.auto; });
@@ -1266,6 +1275,7 @@ VIEWS.log = () => {
       <label class="field"><span>Site</span><input type="text" data-sug="addr" autocomplete="off" data-after="logsite" data-i="${i}" ${K(`entries.${i}.site`)} value="${esc(e.site)}" placeholder="Address"></label>
       <div class="times"><label class="field"><span>Start</span><input type="time" ${K(`entries.${i}.start`)} value="${esc(e.start)}"></label><label class="field"><span>Finish</span><input type="time" ${K(`entries.${i}.finish`)} value="${esc(e.finish)}"></label><label class="field"><span>Breaks (min)</span><input type="number" inputmode="numeric" ${K(`entries.${i}.breakMin`)} value="${e.breakMin ?? ""}"></label><div class="field"><span>Hours</span><div class="hoursbadge" style="padding-top:6px">${fmtH(entryHours(e))}</div></div></div>
       <label class="field"><span>What you did</span><textarea ${K(`entries.${i}.did`)} placeholder="e.g. Cladding install, demo internal wall for new lintel">${esc(e.did)}</textarea></label>
+      ${e.est ? `<div class="tiny" style="color:var(--orange)">Times guessed from your photos. Change them if they're not right, or bring in Google Timeline for the real ones.</div>` : e.tl ? `<div class="tiny muted">Times from Google Timeline</div>` : ""}
       ${e.invId ? `<div class="tiny muted">Billed on invoice ${esc(getDoc(e.invId)?.number || "")}</div>` : ""}
     </div>`).join("");
   const extras = (log.extras || []).map((x, i) => `<div class="entry"><div class="row" style="align-items:flex-start"><label class="field grow"><span>What happened</span><textarea ${K(`extras.${i}.text`)} placeholder="Variation the client asked for, hidden rot, delivery late, extra materials bought…" style="min-height:56px">${esc(x.text)}</textarea></label><button class="x" data-act="rmrow" data-id="${id}" data-p="extras" data-i="${i}" aria-label="Remove">${ic("x")}</button></div>
@@ -1294,7 +1304,7 @@ function driveCard(log, K, id){
   const s = S(), trips = log.trips || [], total = dayKm(log);
   const sites = [...new Set((log.entries || []).map(e => (e.site || "").trim()).filter(x => x && x !== "Various"))].filter(x => !trips.some(t => normAddr(t.to) === normAddr(x))).slice(0, 3);
   const row = (t, i) => `<div class="entry trip">
-    <div class="row between"><b class="small">Trip ${i + 1}</b><button class="x" data-act="rmrow" data-id="${id}" data-p="trips" data-i="${i}" aria-label="Remove trip">${ic("x")}</button></div>
+    <div class="row between"><b class="small">Trip ${i + 1}${t.est ? ` <span class="tiny" style="color:var(--orange);font-weight:400">guessed, check it</span>` : ""}</b><button class="x" data-act="rmrow" data-id="${id}" data-p="trips" data-i="${i}" aria-label="Remove trip">${ic("x")}</button></div>
     <div class="fields"><label class="field"><span>From</span><input type="text" data-sug="addr" autocomplete="off" ${K(`trips.${i}.from`)} data-after="tripaddr" data-i="${i}" value="${esc(t.from)}" placeholder="Home, Bunnings Kotara…"></label>
       <label class="field"><span>To</span><input type="text" data-sug="addr" autocomplete="off" ${K(`trips.${i}.to`)} data-after="tripaddr" data-i="${i}" value="${esc(t.to)}" placeholder="Site, supplier…"></label></div>
     <div class="fields"><label class="field"><span>Reason</span><input type="text" list="dl_why" ${K(`trips.${i}.why`)} value="${esc(t.why)}" placeholder="e.g. Getting prices on materials"></label>
@@ -1382,7 +1392,7 @@ const supWord = s => String(s || "").toLowerCase().split(/[^a-z0-9]+/).find(w =>
 function tlPlace(p){
   const ll = p && p.ll; if (!ll) return {kind:"other", label:"", named:false, key:"", ll:null};
   const near = TL.sites.filter(x => kmBetween(ll, x.ll) <= 0.25);
-  if (near.length) return {kind:"job", jobIds:[...new Set(near.map(x => x.jobId))], label:near[0].site, named:true, key:"job:" + normAddr(near[0].site), ll};
+  if (near.length) { const x = near[0]; return {kind:"job", jobIds:[...new Set(near.map(x => x.jobId))], label:x.site || tlLLs({ll:x.ll}).replace(",", ", "), show:x.site ? "" : jobLabel(getDoc(x.jobId)), named:true, key:"job:" + (x.site ? normAddr(x.site) : x.jobId), ll}; }
   if (TL.home && kmBetween(ll, TL.home) <= 0.3 || /HOME/.test(p.sem || "")) return {kind:"home", label:S().home || "Home", named:true, key:"home", ll};
   const mine = myPlace(ll); if (mine) return {kind:mine.work ? "supplier" : "other", label:mine.name, named:true, key:"pl:" + mine.ll.join(","), ll, mine:true};
   const key = tlKey(p), c = rgCache();
@@ -1390,7 +1400,7 @@ function tlPlace(p){
   const low = label.toLowerCase();
   return {kind:label && (TL_SUPPLY.test(label) || TL.sw.some(w => low.includes(w))) ? "supplier" : "other", label, named:!!label, key, ll, pid:p.pid || ""};
 }
-const tlShow = P => P.kind === "home" ? "Home" : P.named ? shortAddr(P.label) : "Unnamed stop";
+const tlShow = P => P.show || (P.kind === "home" ? "Home" : P.named ? shortAddr(P.label) : "Unnamed stop");
 const tlRec = P => P.kind === "home" ? (S().home || "Home") : P.named ? P.label : P.ll ? P.ll[0].toFixed(5) + ", " + P.ll[1].toFixed(5) : "";
 const tlLLs = P => P.ll ? P.ll[0].toFixed(5) + "," + P.ll[1].toFixed(5) : "";
 function tlJob(ids, date){
@@ -1410,7 +1420,7 @@ function tlMonth(month){
   TL.visits.forEach(v => {
     const d = ymd(v.s); if (d.slice(0, 7) !== month || v.e - v.s < 10 * 60e3) return;
     const P = tlPlace(v); if (P.kind !== "job") return;
-    const k = "st" + d + P.key, D = day(d); const x = D.sites[k] || (D.sites[k] = {key:k, jobIds:P.jobIds, site:P.label, s:v.s, e:v.e});
+    const k = "st" + d + P.key, D = day(d); const x = D.sites[k] || (D.sites[k] = {key:k, jobIds:P.jobIds, site:P.show ? "" : P.label, s:v.s, e:v.e});
     if (v.s < x.s) x.s = v.s; if (v.e > x.e) x.e = v.e;
   });
   TL.drives.forEach(r => {
@@ -1447,7 +1457,8 @@ function tlMonth(month){
     // which knows where you really came from (via Bunnings, say) and the km you actually drove
     const autoT = trips.filter(t => t.auto && t.time), used = new Set();
     const sameSpot = (addr, P) => { if (!(addr || "").trim()) return false; if (normAddr(addr) === normAddr(tlRec(P))) return true; const c = geoCache()[normAddr(addr)]; return !!(c && P.ll && kmBetween([c[1], c[0]], P.ll) <= 0.3); };
-    D.manual = trips.some(t => !t.tl && !t.auto) || D.typedKm > 0;
+    // trips the guide guessed (home to site and back, supplier runs from receipts) get swapped for the real drives
+    D.est = trips.filter(t => t.est); D.manual = trips.some(t => !t.tl && !t.auto && !t.est) || D.typedKm > 0;
     D.drives.forEach(x => {
       x.added = trips.some(t => t.tl === x.key);
       if (!x.added) { const end = x.e.getHours() * 60 + x.e.getMinutes(); const t = autoT.find(t => !used.has(t.id) && sameSpot(t.to, x.B) && Math.abs(mins(t.time) - end) <= 90); if (t) { used.add(t.id); x.repl = t; } }
@@ -1457,7 +1468,7 @@ function tlMonth(month){
       x.start = hmR(x.s); x.finish = hmR(x.e); const j = getDoc(x.jobId);
       x.ent = ents.find(e => e.jobId === x.jobId); x.quote = tlQuoteish(j, D.date);
       x.same = !!x.ent && Math.abs(mins(x.ent.start) - mins(x.start)) <= 15 && Math.abs(mins(x.ent.finish) - mins(x.finish)) <= 15; x.added = !!(x.ent && x.ent.tl) || x.same;
-      x.def = !x.ent && !x.quote && x.e - x.s >= 60 * 60e3;
+      x.def = (!x.ent || !!x.ent.est) && !x.quote && x.e - x.s >= 60 * 60e3;
     });
     D.work = sites.length > 0 || D.drives.some(x => x.work) || D.ph.length > 0;
   });
@@ -1465,15 +1476,20 @@ function tlMonth(month){
 }
 async function tlPrepare(){
   const s = S(); TL.busy = "Finding your job sites on the map…"; render();
-  const jobs = all("job").filter(j => (j.site || "").trim() && j.status !== "lost"); const sites = [];
-  for (const j of jobs) { try { const c = await geocode(j.site); sites.push({jobId:j.id, ll:[c[1], c[0]], site:j.site}); } catch(e){} }
-  TL.sites = sites; TL.missing = jobs.length - new Set(sites.map(x => x.jobId)).size;
   TL.home = null; if (s.home) { try { const c = await geocode(s.home); TL.home = [c[1], c[0]]; } catch(e){} }
+  // a job is found by its address, and also by where its photos were taken, so jobs with no address (or one the map can't find) still match
+  const jobs = all("job").filter(j => j.status !== "lost"), sites = [];
+  for (const j of jobs) {
+    const addr = jobSite(j); let ll = null;
+    if (addr) { try { const c = await geocode(addr); ll = [c[1], c[0]]; sites.push({jobId:j.id, ll, site:addr}); } catch(e){} }
+    const sp = photoSpot(j); if (sp && !(ll && kmBetween(ll, sp) < 0.25)) sites.push({jobId:j.id, ll:sp, site:addr, photo:true});
+  }
+  TL.sites = sites; TL.missing = jobs.filter(j => jobSite(j) && !sites.some(x => x.jobId === j.id)).length;
   TL.busy = ""; render(); tlNames();
 }
 function tlNeedNames(){
   const c = rgCache(), out = new Map();
-  TL.drives.forEach(r => { if (ymd(r.s).slice(0, 7) !== TL.month) return; [r.from || {ll:r.a}, r.to || {ll:r.b}].forEach(p => { if (!p || !p.ll || p.name) return; const P = tlPlace(p); if (P.kind === "job" || P.kind === "home" || P.named || !P.key) return; if (!(P.key in c) && !TL.fail.has(P.key)) out.set(P.key, P); }); });
+  TL.drives.forEach(r => { if (!TL.allNames && ymd(r.s).slice(0, 7) !== TL.month) return; [r.from || {ll:r.a}, r.to || {ll:r.b}].forEach(p => { if (!p || !p.ll || p.name) return; const P = tlPlace(p); if (P.kind === "job" || P.kind === "home" || P.named || !P.key) return; if (!(P.key in c) && !TL.fail.has(P.key)) out.set(P.key, P); }); });
   return [...out.values()];
 }
 function tlRedraw(force){ if (UI.view !== "timeline") return; const n = Date.now(); if (force || n - TL.rt > 1200) { TL.rt = n; queueRender(); } }
@@ -1488,6 +1504,31 @@ async function tlNames(){
     }
   } finally { TL.run = false; TL.busy = ""; tlRedraw(true); }
 }
+/* put the ticked site times and drives for one month into the day logs */
+function tlApplyMonth(month){
+  let nT = 0, nS = 0, km = 0;
+  tlMonth(month).forEach(D => {
+    const drives = D.drives.filter(x => !x.added && tlPick(x).on).sort((a, b) => a.s - b.s), sites = Object.values(D.sites).filter(x => !x.added && tlPick(x).on);
+    if (!drives.length && !sites.length) return;
+    const l = ensureLog(D.date); l.entries = l.entries || []; l.trips = l.trips || [];
+    sites.forEach(x => {
+      const jobId = tlPick(x).jobId || x.jobId, j = getDoc(jobId);
+      let e = l.entries.find(e => e.jobId === jobId) || l.entries.find(e => !e.jobId && !e.did);
+      if (!e) { e = {id:uid("e"), jobId, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
+      Object.assign(e, {jobId, site:e.site || jobSite(j) || x.site, start:x.start, finish:x.finish, breakMin:(x.e - x.s) >= 5 * 3600e3 ? (S().breakMin ?? 45) : 0, tl:true}); delete e.est; nS++;
+    });
+    if (drives.length && !D.manual) l.trips = l.trips.filter(t => !t.est);
+    drives.forEach(x => {
+      const p = tlPick(x), rec = {from:tlRec(x.A), to:tlRec(x.B), why:p.why, jobId:p.jobId, km:x.km, back:false, tl:x.key, time:hmR(x.s), auto:false, kmAuto:false};
+      const old = x.repl && l.trips.find(t => t.id === x.repl.id);
+      if (old) Object.assign(old, rec); else l.trips.push({id:uid("tr"), ...rec}); nT++; km += x.km;
+    });
+    if (l.trips.every(t => t.time)) l.trips.sort((a, b) => a.time.localeCompare(b.time));
+    put(touch(l));
+  });
+  return {nT, nS, km};
+}
+const tlMonths = () => [...new Set(TL.drives.map(r => ymd(r.s).slice(0, 7)).concat(TL.visits.map(v => ymd(v.s).slice(0, 7))))].sort().reverse();
 VIEWS.timeline = () => {
   const s = S();
   const how = `<ol class="small" style="margin:6px 0 10px;padding-left:20px;line-height:1.5"><li>On your Android phone open <b>Settings</b>, then <b>Location</b>, <b>Location services</b>, <b>Timeline</b>, and tap <b>Export Timeline data</b>.</li><li>Save the file (Downloads is fine). It's called something like <b>Timeline.json</b>.</li><li>Tap <b>Choose Timeline file</b> below and pick it.</li></ol>`;
@@ -1497,7 +1538,7 @@ VIEWS.timeline = () => {
   if (!TL.segs) return `<div class="stack"><div class="card"><h2>Fill your day logs from Google Timeline</h2>
     <p class="small" style="margin-top:0">Your phone's Timeline knows where you drove and how long you were at each job. Bring it in here and the app finds your trips and time on site, ticks the ones that look like work, and adds them to your day logs.</p>
     ${how}<div class="row"><button class="btn primary" data-act="tlfile">Choose Timeline file</button></div>${TL.busy ? `<p class="small muted">${esc(TL.busy)}</p>` : ""}${privacy}</div>${places}</div>`;
-  const months = [...new Set(TL.drives.map(r => ymd(r.s).slice(0, 7)).concat(TL.visits.map(v => ymd(v.s).slice(0, 7))))].sort().reverse();
+  const months = tlMonths();
   if (!months.includes(TL.month)) TL.month = months[0] || "";
   const days = TL.month ? tlMonth(TL.month) : [];
   const first = TL.segs.length ? ymd(TL.segs.reduce((a, b) => a.s < b.s ? a : b).s) : "", last = TL.segs.length ? ymd(TL.segs.reduce((a, b) => a.e > b.e ? a : b).e) : "";
@@ -1519,7 +1560,7 @@ VIEWS.timeline = () => {
     const p = tlPick(x), j = getDoc(p.jobId || x.jobId), hrs = round2((mins(x.finish) - mins(x.start) + 1440) % 1440 / 60);
     const sub = `${t12(x.start)} to ${t12(x.finish)}, ${fmtH(hrs)} there${x.quote ? " (looks like a quote visit)" : ""}`;
     if (x.added) return `<div class="tlrow"><span class="pill paid">${x.same && !x.ent.tl ? "In your log" : "Added"}</span><span class="small grow">On site: ${esc(jobLabel(j))}<span class="tiny muted" style="display:block">${sub}</span></span></div>`;
-    return `<div class="tlrow ${p.on ? "on" : ""}"><label class="check"><input type="checkbox" data-ch="tl" data-key="${x.key}" ${p.on ? "checked" : ""}><span class="grow"><b class="small">On site: ${esc(jobLabel(j))}</b><span class="tiny muted" style="display:block">${sub}${x.ent ? `. Your day log already has ${t12(x.ent.start)} to ${t12(x.ent.finish)}${p.on ? ", and ticking this replaces those times" : ""}` : ""}</span></span></label></div>
+    return `<div class="tlrow ${p.on ? "on" : ""}"><label class="check"><input type="checkbox" data-ch="tl" data-key="${x.key}" ${p.on ? "checked" : ""}><span class="grow"><b class="small">On site: ${esc(jobLabel(j))}</b><span class="tiny muted" style="display:block">${sub}${x.ent ? `. Your day log ${x.ent.est ? "has a guess of" : "already has"} ${t12(x.ent.start)} to ${t12(x.ent.finish)}${p.on ? `, and ticking this puts in ${x.ent.est ? "the real" : "these"} times instead` : ""}` : ""}</span></span></label></div>
       ${x.jobIds.length > 1 && p.on ? `<div class="fields tlf"><label class="field"><span>Which job</span><select data-ch="tlf" data-key="${x.key}" data-f="jobId">${x.jobIds.map(id => `<option value="${id}" ${id === (p.jobId || x.jobId) ? "selected" : ""}>${esc(jobLabel(getDoc(id)))}</option>`).join("")}</select></label></div>` : ""}`;
   };
   const dayCard = D => {
@@ -1527,6 +1568,7 @@ VIEWS.timeline = () => {
     const km = round2(sum(D.drives.filter(x => x.added || tlPick(x).on), x => x.km));
     return `<div class="card tlday"><div class="head"><h3 style="margin:0">${dShort(D.date)}</h3><span class="small muted">${km ? km + " km for work" : ""}</span></div>
       ${D.ph.length ? `<div class="tiny muted" style="margin:-2px 0 8px">Photos that day: ${D.ph.map(x => `${esc(jobLabel(getDoc(x.id)))} (${x.n})`).join(", ")}</div>` : ""}
+      ${D.est.length && !D.manual ? `<div class="tiny muted" style="margin:-2px 0 8px">The ${D.est.length === 1 ? "trip" : `${D.est.length} trips`} the guide guessed for this day get${D.est.length === 1 ? "s" : ""} replaced by the drives you tick.</div>` : ""}
       ${D.manual ? `<div class="note small" style="margin-bottom:8px">You already put driving in for this day${D.typedKm ? ` (${D.typedKm} km)` : ""}, so nothing is ticked.${D.typedKm ? " If you tick trips here, they replace that total." : " Only tick trips that aren't in your log yet."}</div>` : ""}
       <div class="stack" style="gap:8px">${sites.map(siteRow).join("")}${main.map(driveRow).join("")}${!sites.length && !main.length ? `<div class="small muted">No work found.</div>` : ""}</div>
       ${other.length ? `<details class="tlother"><summary class="small muted">${other.length} other drive${other.length === 1 ? "" : "s"} that don't look like work</summary><div class="stack" style="gap:8px;margin-top:8px">${other.map(driveRow).join("")}</div></details>` : ""}</div>`;
@@ -1539,7 +1581,8 @@ VIEWS.timeline = () => {
     <div class="card"><div class="row between"><div><b>${esc(TL.files)}</b><div class="tiny muted">${first ? `${dLong(first)} to ${dLong(last)}` : "Nothing found"} · ${TL.drives.length} drives</div></div><button class="btn sm" data-act="tlfile">Choose another file</button></div>
       ${TL.busy ? `<p class="small muted" style="margin-bottom:0">${esc(TL.busy)}</p>` : ""}${warn.map(w => `<div class="note small" style="margin-top:8px">${w}</div>`).join("")}</div>
     ${months.length ? `<div class="chips">${months.map(m => `<button class="chip ${m === TL.month ? "on" : ""}" data-act="tlmonth" data-m="${m}">${mName(m)}</button>`).join("")}</div>` : `<div class="card empty">No drives or visits in that file.</div>`}
-    ${TL.month ? `<div class="card"><p class="small" style="margin-top:0">Ticked items get added to your day logs for <b>${mName(TL.month)}</b>. Trips are recorded with where from, where to, the reason and the km Google measured. Change anything first if it's not right.</p>${applyBtn}</div>` : ""}
+    ${TL.month ? `<div class="card"><p class="small" style="margin-top:0">Ticked items get added to your day logs for <b>${mName(TL.month)}</b>. Trips are recorded with where from, where to, the reason and the km Google measured. Change anything first if it's not right.</p>${applyBtn}
+      ${months.length > 1 ? `<p class="small" style="margin:12px 0 6px">Or skip checking each month and add everything that looks like work from all ${months.length} months at once.</p><button class="btn" data-act="tlall">Add all ${months.length} months</button>` : ""}</div>` : ""}
     <datalist id="dl_why">${TRIP_WHY.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
     ${work.map(dayCard).join("")}
     ${quiet.length ? `<details class="card tlother"><summary class="small"><b>${quiet.length} day${quiet.length === 1 ? "" : "s"}</b> <span class="muted">with no work found</span></summary><div class="stack" style="gap:10px;margin-top:10px">${quiet.map(dayCard).join("")}</div></details>` : ""}
@@ -1708,6 +1751,147 @@ function cuSupplierSugs(j){
   return out.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
 }
 
+/* ---------- sort a batch of photos into jobs ----------
+   Pick a pile of photos at once, a day's or a few months' worth. Each one goes to a job by where it was taken (near
+   the job's address, or where its other photos were taken) or, with no location, by the day (the job you logged or
+   took photos of that day). You check each group, then they're saved to their jobs and the guide takes it from there. */
+const PS = { items:[], pick:{}, busy:"", result:null };
+function jobPlaces(){
+  const out = [];
+  all("job").filter(j => j.status !== "lost").forEach(j => { const a = llOf(jobSite(j)); if (a) out.push({jobId:j.id, ll:a}); const sp = photoSpot(j); if (sp && !(a && kmBetween(a, sp) < 0.25)) out.push({jobId:j.id, ll:sp}); });
+  return out;
+}
+/* the jobs you were on that day: logged hours, else photos, else the site visit */
+function jobsOnDay(d){
+  if (!d) return [];
+  const live = id => (getDoc(id) || {}).status !== "lost";
+  const l = getDoc("log_" + d), a = [...new Set(((l && l.entries) || []).map(e => e.jobId).filter(Boolean))].filter(live); if (a.length) return a;
+  const b = all("job").filter(j => photoDays(j).some(p => p.date === d)).map(j => j.id).filter(live); if (b.length) return b;
+  return all("job").filter(j => (j.visit || {}).date === d).map(j => j.id).filter(live);
+}
+function psGroups(){
+  const places = jobPlaces(), home = llOf(S().home), g = {};
+  PS.items.forEach(it => {
+    let kind = "nogps", where = "nogps", jobIds = [];
+    if (it.ll) {
+      const near = places.filter(p => kmBetween(it.ll, p.ll) <= 0.3);
+      if (near.length) { kind = "job"; jobIds = [...new Set(near.map(p => p.jobId))]; where = "job:" + jobIds.join(","); }
+      else if (home && kmBetween(it.ll, home) <= 0.3) { kind = "home"; where = "home"; }
+      else { const mine = myPlace(it.ll); kind = "place"; where = mine ? "pl:" + mine.ll.join(",") : it.ll[0].toFixed(3) + "," + it.ll[1].toFixed(3); }
+    }
+    const k = (it.date || "") + "|" + where, x = g[k] || (g[k] = {key:k, date:it.date, kind, jobIds, ll:it.ll, items:[]});
+    x.items.push(it);
+  });
+  return Object.values(g).sort((a, b) => (a.date || "9").localeCompare(b.date || "9") || a.key.localeCompare(b.key)).map(x => {
+    let guess = "";
+    if (x.kind === "job") { const on = jobsOnDay(x.date).filter(id => x.jobIds.includes(id)); guess = x.jobIds.length === 1 ? x.jobIds[0] : on.length === 1 ? on[0] : tlJob(on.length ? on : x.jobIds, x.date); }
+    else if (x.kind !== "home") { const on = jobsOnDay(x.date); if (on.length === 1) guess = on[0]; }
+    const j = getDoc(PS.pick[x.key] ?? guess);
+    // a photo already in the job (same moment) is skipped; the album drafts only kept the date, so those can't be told apart
+    x.items.forEach(it => { it.dup = !!j && !!it.date && (j.imgs || []).some(im => im.taken && im.date === it.date && im.time === it.time && (!im.ll || !it.ll || kmBetween(im.ll, it.ll) < 0.05)); });
+    x.had = j && x.date ? (j.imgs || []).filter(im => !im.time && phTaken(j, im) && im.date === x.date).length : 0;
+    x.fresh = x.items.filter(it => !it.dup).length;
+    return {...x, guess, choice:PS.pick[x.key] ?? (x.had || !x.fresh ? "" : guess)};
+  });
+}
+async function psLoad(files){
+  PS.items.forEach(it => URL.revokeObjectURL(it.url));
+  Object.assign(PS, {items:[], pick:{}, result:null, busy:`Reading ${files.length} photo${files.length === 1 ? "" : "s"}…`});
+  if (UI.view !== "photosort") go("photosort"); else render();
+  for (const f of files) { const x = await readExif(f) || {}; PS.items.push({id:uid("ps"), file:f, url:URL.createObjectURL(f), date:x.date || "", time:x.time || "", ll:x.ll || null}); }
+  PS.busy = ""; render();
+}
+VIEWS.photosort = () => {
+  const intro = `<p class="small" style="margin-top:0">Pick all your job photos at once, even a few months' worth. The app reads when and where each one was taken and puts it with the right job: by the job's address, where its other photos were taken, or the day you worked there. You check each group before anything's saved.</p>`;
+  if (PS.busy) return `<div class="stack"><div class="card"><h2>Sort photos into jobs</h2><p class="small" style="margin:0">${esc(PS.busy)}</p></div></div>`;
+  if (PS.result) return `<div class="stack"><div class="card"><h2>Photos added</h2><p class="small">${esc(PS.result)}</p><p class="small">The catch-up guide now uses them to suggest each job's visit date, the days you worked and your supplier runs.</p><div class="row"><button class="btn primary" data-act="cuopen">Open the catch-up guide</button><button class="btn" data-act="psfile">Sort more photos</button></div></div></div>`;
+  if (!PS.items.length) return `<div class="stack"><div class="card"><h2>Sort photos into jobs</h2>${intro}<button class="btn primary" data-act="psfile">${ic("img")} Pick photos</button>
+    <p class="tiny muted" style="margin:10px 0 0">Photos already in a job are skipped. On a computer, photos downloaded from Google Photos keep their place and time.</p></div></div>`;
+  const gs = psGroups(), n = sum(gs.filter(x => x.choice), x => x.fresh), nJ = new Set(gs.filter(x => x.choice && x.fresh).map(x => x.choice)).size;
+  const days = new Set(PS.items.map(it => it.date).filter(Boolean)).size, gps = PS.items.filter(it => it.ll).length;
+  const where = x => {
+    if (x.kind === "job") return `Taken at ${x.jobIds.length === 1 ? "this job's site" : "a site with " + x.jobIds.length + " jobs"}`;
+    if (x.kind === "home") return "Taken at home";
+    if (x.kind === "place") { const mine = myPlace(x.ll), nm = mine ? mine.name : rgName(x.ll); return nm === undefined ? "Looking up where these were taken…" : nm ? `Taken ${/^Near /.test(nm) ? "near " + esc(nm.slice(5)) : "at " + esc(nm)}${(mine ? mine.work : TL_SUPPLY.test(nm)) ? " (a supplier)" : ""}` : "Taken somewhere that isn't a job site"; }
+    return x.guess ? "No location, matched by the day you were on the job" : "No location in these photos";
+  };
+  const grp = x => { const ts = x.items.map(it => it.time).filter(Boolean).sort();
+    return `<div class="card psg"><div class="row between"><b>${x.date ? dShort(x.date) : "No date"}</b><span class="small muted">${x.items.length} photo${x.items.length === 1 ? "" : "s"}${ts.length ? `, ${t12(ts[0])}${ts.length > 1 && ts[ts.length - 1] !== ts[0] ? " to " + t12(ts[ts.length - 1]) : ""}` : ""}</span></div>
+      <div class="small muted" style="margin:2px 0 8px">${where(x)}${x.ll ? ` · <a href="https://www.google.com/maps/search/?api=1&query=${x.ll[0]},${x.ll[1]}" target="_blank" rel="noopener">Map</a>` : ""}</div>
+      <div class="psthumbs">${x.items.slice(0, 6).map(it => `<img src="${it.url}" alt="" loading="lazy" class="${it.dup ? "dup" : ""}">`).join("")}${x.items.length > 6 ? `<span class="small muted">+${x.items.length - 6}</span>` : ""}</div>
+      <label class="field" style="margin-top:8px"><span>Add to</span><select data-ch="psjob" data-key="${esc(x.key)}">${jobOptions(x.choice, "Don't add these")}<option value="__new" ${x.choice === "__new" ? "selected" : ""}>Make a new job from these</option></select></label>
+      ${!x.fresh ? `<div class="tiny muted" style="margin-top:6px">These are already in that job.</div>` : x.fresh < x.items.length ? `<div class="tiny muted" style="margin-top:6px">${x.items.length - x.fresh} of these ${x.items.length - x.fresh === 1 ? "is" : "are"} already in that job and will be skipped.</div>` : ""}
+      ${x.had && x.fresh ? `<div class="tiny muted" style="margin-top:6px">That job already has ${x.had} photo${x.had === 1 ? "" : "s"} from this day (from your albums), so these may be the same ones. Pick the job if they're new.</div>` : ""}</div>`; };
+  return `<div class="stack">
+    <div class="card"><div class="row between"><div><b>${PS.items.length} photo${PS.items.length === 1 ? "" : "s"}</b><div class="tiny muted">${days} day${days === 1 ? "" : "s"}, ${gps ? `${gps === PS.items.length ? "all" : gps} with a location` : "no locations"}</div></div><button class="btn sm" data-act="psfile">Pick different photos</button></div>
+      ${!gps ? `<div class="note small" style="margin-top:8px">Your phone left the location out of these, so they're matched by the day only. Photos downloaded from Google Photos on a computer usually keep it.</div>` : ""}
+      <div class="row" style="margin-top:10px"><button class="btn primary" data-act="pssave" ${n ? "" : "disabled"}>Add ${n} photo${n === 1 ? "" : "s"} to ${nJ} job${nJ === 1 ? "" : "s"}</button></div></div>
+    ${gs.map(grp).join("")}
+  </div>`;
+};
+
+/* ---------- a pile of receipts at once ----------
+   Pick lots of receipt photos together. Each one is read on this device for the shop, date and total. The job is
+   picked from the day (the job you were on), and a photo taken at the shop gives the shop and the date. You check
+   them all, then save. */
+const RB = { list:[], busy:false, reading:false };
+async function rbLoad(files){
+  Object.assign(RB, {list:[], busy:true}); if (UI.view !== "receipts") go("receipts"); else render();
+  for (const f of files) {
+    const x = await readExif(f) || {}; let data = ""; try { data = await compressImage(f, 1400, 230000); } catch(e){ continue; }
+    RB.list.push({id:uid("rb"), data, pdate:x.date || "", ll:x.ll || null, date:"", amount:"", supplier:"", category:"Materials", desc:"", items:"", jobId:"", st:"wait"});
+  }
+  RB.busy = false; render(); rbRead();
+}
+function rbFill(r){
+  // a photo taken at the shop says where and when; one taken later (a pile photographed at home) only says when you took it
+  const mine = r.ll && myPlace(r.ll), nm = r.ll && !mine ? rgName(r.ll) : "", atShop = !!(mine ? mine.work : nm && TL_SUPPLY.test(nm));
+  if (atShop && !r.supplier) r.supplier = mine ? mine.name : shortAddr(nm.replace(/^Near /, ""));
+  if (!r.date && r.pdate && (atShop || r.pdate !== today())) { r.date = r.pdate; r.dateFrom = "photo"; }
+  if (!r.jobSet) { const on = jobsOnDay(r.date); r.jobId = on.length === 1 ? on[0] : ""; }
+  r.dup = all("expense").some(e => e.date === r.date && Math.abs(num(e.amount) - num(r.amount)) < 0.01 && num(r.amount) > 0);
+  if (r.on === undefined || r.dupWas !== r.dup) { r.on = !r.dup; r.dupWas = r.dup; }
+}
+async function rbRead(){
+  if (RB.reading) return; RB.reading = true;
+  try {
+    for (const r of RB.list) {
+      if (r.st !== "wait") continue; r.st = "reading"; queueRender();
+      try {
+        const o = await ocrReceipt(r.data);
+        if (o && o.readable !== false) {
+          if (num(o.total)) r.amount = round2(num(o.total));
+          if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || "") && o.date <= today()) { r.date = o.date; r.dateFrom = "receipt"; }
+          if (o.supplier) r.supplier = o.supplier; if (EXP_CATS.includes(o.category)) r.category = o.category;
+          r.items = (o.items || []).map(it => `${num(it.qty) > 1 ? num(it.qty) + " × " : ""}${it.desc || ""}${it.amount != null ? "  " + money2(it.amount) : ""}`).join("\n");
+        }
+        r.st = num(r.amount) ? "ok" : "check";
+      } catch(e){ r.st = "check"; }
+      rbFill(r); queueRender();
+    }
+  } finally { RB.reading = false; queueRender(); }
+}
+VIEWS.receipts = () => {
+  if (!RB.list.length) return `<div class="stack"><div class="card"><h2>Add a pile of receipts</h2><p class="small" style="margin-top:0">${RB.busy ? "Getting the photos ready…" : "Pick photos of all your receipts at once. Each one is read for the shop, the date and the total, and put with the job you were on that day. You check them, then save them all."}</p>${RB.busy ? "" : `<button class="btn primary" data-act="rbfile">${ic("img")} Pick receipt photos</button>`}</div></div>`;
+  const ready = RB.list.filter(r => r.st !== "wait" && r.st !== "reading"); ready.forEach(rbFill);
+  const n = RB.list.filter(r => r.on && num(r.amount) > 0 && r.date).length;
+  const F = (r, f) => `data-ch="rbf" data-id="${r.id}" data-f="${f}"`;
+  const card = r => `<div class="card rbc ${r.on ? "" : "off"}"><div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:12px">
+      <img src="${r.data}" alt="Receipt" class="rbimg">
+      <div class="grow" style="min-width:0">
+        <label class="check small" style="margin-bottom:6px"><input type="checkbox" ${F(r, "on")} ${r.on ? "checked" : ""}> <b>Save this one</b></label>
+        <div class="tiny ${r.st === "check" || r.dup ? "" : "muted"}" style="${r.st === "check" || r.dup ? "color:var(--orange)" : ""}">${r.st === "wait" ? "Waiting to be read…" : r.st === "reading" ? "Reading…" : r.dup ? "Looks like it's already in your expenses (same day and amount)." : r.st === "check" ? "Couldn't read the total. Type it in." : !r.date ? "Add the date." : r.dateFrom === "photo" ? "Date from when the photo was taken. Check it." : "Read from the receipt. Check it."}</div>
+      </div></div>
+    <div class="fields" style="margin-top:8px"><label class="field"><span>Amount ($)</span><input type="number" step="any" inputmode="decimal" ${F(r, "amount")} value="${r.amount}"></label><label class="field"><span>Date</span><input type="date" ${F(r, "date")} value="${esc(r.date)}"></label></div>
+    <div class="fields"><label class="field"><span>Shop</span><input type="text" ${F(r, "supplier")} value="${esc(r.supplier)}" placeholder="e.g. Bunnings"></label><label class="field"><span>Category</span><select ${F(r, "category")}>${EXP_CATS.map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></label></div>
+    <label class="field"><span>Job</span><select ${F(r, "jobId")}>${jobOptions(r.jobId, "No job (general business)")}</select></label></div>`;
+  return `<div class="stack">
+    <div class="card"><div class="row between"><div><b>${RB.list.length} receipt${RB.list.length === 1 ? "" : "s"}</b><div class="tiny muted">${ready.length < RB.list.length ? `Read ${ready.length} of ${RB.list.length}, the rest are on their way` : "All read. Check the amounts and dates."}</div></div><button class="btn sm" data-act="rbfile">Pick different photos</button></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" data-act="rbsave" ${n ? "" : "disabled"}>Save ${n} expense${n === 1 ? "" : "s"}</button></div></div>
+    ${RB.list.map(card).join("")}
+  </div>`;
+};
+
 /* ---------- catch-up guide ----------
    Walks you through getting every job complete, one step at a time: your details, the basics for each job, Google
    Timeline, then each job's prices, days, driving, expenses and invoices. What's done is worked out from what's in
@@ -1723,6 +1907,8 @@ function cuSteps(){
   setup("biz", "Add your business details", s.name && s.abn && s.phone && s.bsb && s.acct, {why:"Your name, ABN, phone and bank details go on every quote and invoice."});
   setup("home", "Add your home or yard address", (s.home || "").trim(), {why:"Your driving starts and ends here, so trips and km can be filled in for you."});
   setup("veh", "Pick what you drive for work", s.vehicle, {why:"This decides how your vehicle costs are claimed at tax time."});
+  setup("psort", "Add all your job photos in one go", s.psDone, {why:"Pick every job photo you've got. The app sorts them into jobs by where and when they were taken, then uses them to fill in visit dates, days worked and supplier runs.", skipTxt:"I'll add them job by job"});
+  setup("rpile", "Add your receipts in one go", s.rbDone || all("expense").length >= 10, {why:"Pick photos of all your receipts. Each one is read for the shop, date and total, and put with the job you were on that day.", skipTxt:"I'll add them one at a time"});
   const jobs = all("job").sort((a, b) => noOf(a.quoteNo) - noOf(b.quoteNo) || (a.created || "").localeCompare(b.created || ""));
   const js = (j, part, k, title, done, o) => steps.push({key:j.id + ":" + k, k, part, job:j, title, done:!!done, skipped:!!(j.cuSkip || {})[k], ...o});
   jobs.forEach(j => {
@@ -1772,12 +1958,14 @@ function cuControls(x){
     case "home": return `<label class="field"><span>Home or yard address</span><input type="text" ${SK("home")} data-sug="addr" autocomplete="off" value="${esc(s.home)}" placeholder="Street, suburb"></label>`;
     case "veh": return `<div class="stack" style="gap:8px"><button class="btn ${s.vehicle === "car" ? "primary" : ""}" data-act="cuveh" data-v="car">A car, or a van or ute that carries under 1 tonne</button><button class="btn ${s.vehicle === "heavy" ? "primary" : ""}" data-act="cuveh" data-v="heavy">A van or ute that carries 1 tonne or more</button></div><p class="tiny muted" style="margin:6px 0 0">Not sure? Most utes and vans are under 1 tonne. Your accountant can confirm.</p>`;
     case "tl": return `<button class="btn primary" data-act="tlopen">Open Google Timeline</button>`;
+    case "psort": return `<button class="btn primary" data-act="psopen">${ic("img")} Sort my photos</button>${s.psDone ? `<p class="tiny muted" style="margin:8px 0 0">Last done ${dAU(s.psDone)}. You can do it again any time from the Jobs page.</p>` : ""}`;
+    case "rpile": return `<button class="btn primary" data-act="rbopen">${ic("img")} Add receipts</button><p class="tiny muted" style="margin:8px 0 0">Also on Money, Expenses.</p>`;
     case "status": return `<div class="chips">${STATUSES.map(([k, l]) => `<button class="chip ${(j.status || "lead") === k ? "on" : ""}" data-act="custatus" data-id="${j.id}" data-s="${k}">${l}</button>`).join("")}</div>`;
     case "client": return clientPicker({bind:`${j.id}|clientId`, value:j.clientId});
     case "photos": { const n = (j.imgs || []).length, ds = photoDays(j), gps = (j.imgs || []).filter(im => im.ll).length;
       return `${n ? `<p class="small" style="margin:0 0 8px"><b>${n} photo${n === 1 ? "" : "s"}</b>${ds.length ? `, taken on ${ds.length} day${ds.length === 1 ? "" : "s"} from ${dShort(ds[0].date)}${ds.length > 1 ? " to " + dShort(ds[ds.length - 1].date) : ""}` : ""}${gps ? `, ${gps} with where ${gps === 1 ? "it was" : "they were"} taken` : ""}.</p>` : ""}
         <button class="btn primary" data-act="addimg" data-id="${j.id}">${ic("img")} ${n ? "Add more photos" : "Add photos"}</button>
-        <p class="tiny muted" style="margin:8px 0 0">Pick them all at once. The app reads the date, time and place each photo was taken.</p>`; }
+        <p class="tiny muted" style="margin:8px 0 0">Pick them all at once. The app reads the date, time and place each photo was taken. Got photos for lots of jobs? <a href="#" data-act="psopen">Sort them all in one go</a>.</p>`; }
     case "site": { const ca = (clientOf(j).address || "").trim(), sp = !(j.site || "").trim() && photoSpot(j), nm = sp ? rgName(sp) : "";
       return `<input type="text" ${JK("site")} data-sug="addr" autocomplete="off" value="${esc(j.site)}" placeholder="Street, suburb">${ca && !(j.site || "").trim() ? `<div style="margin-top:8px"><button class="btn sm" data-act="cusite" data-id="${j.id}">Same as ${esc(clientOf(j).name || "client")}'s address: ${esc(shortAddr(ca))}</button></div>` : ""}
         ${sp ? `<div class="row" style="margin-top:8px">${nm ? `<button class="btn sm" data-act="cusitephoto" data-id="${j.id}" data-v="${esc(nm.replace(/^Near /, ""))}">Your photos were taken ${/^Near /.test(nm) ? "near" : "at"} ${esc(nm.replace(/^Near /, ""))}</button>` : `<span class="small muted">${nm === undefined ? "Looking up where your photos were taken…" : "Your photos show where it was."}</span>`}<a class="small" href="https://www.google.com/maps/search/?api=1&query=${sp[0]},${sp[1]}" target="_blank" rel="noopener">See it on the map</a></div>` : ""}`; }
@@ -1797,7 +1985,7 @@ function cuControls(x){
       return `<p class="small" style="margin:0 0 8px">${miss.length ? `<b>${miss.length} of ${ds.length} day${ds.length === 1 ? "" : "s"}</b> on this job ${miss.length === 1 ? "has" : "have"} no driving yet.` : "Every day on this job has its driving."}</p>
         <div class="row">${miss.length && s.home && site ? `<button class="btn primary" data-act="cutrips" data-id="${j.id}">Add home to site and back for ${miss.length === 1 ? "that day" : `those ${miss.length} days`}</button>` : ""}<button class="btn" data-act="tlopen">Use Google Timeline</button></div>
         ${!s.home || !site ? `<p class="tiny muted" style="margin:6px 0 0">Add ${!s.home ? "your home address" : "the job's site address"} and this can fill in the trips for you.</p>` : ""}${cuSupHtml(j)}`; }
-    case "exp": { const n = all("expense").filter(e => e.jobId === j.id).length; return `${n ? `<p class="small" style="margin:0 0 8px">${n} expense${n === 1 ? "" : "s"} so far.</p>` : ""}<button class="btn primary" data-act="newexp" data-job="${j.id}" data-date="${esc(cuDays(j)[0] || j.start || today())}">Add an expense for this job</button>`; }
+    case "exp": { const n = all("expense").filter(e => e.jobId === j.id).length; return `${n ? `<p class="small" style="margin:0 0 8px">${n} expense${n === 1 ? "" : "s"} so far.</p>` : ""}<div class="row"><button class="btn primary" data-act="newexp" data-job="${j.id}" data-date="${esc(cuDays(j)[0] || j.start || today())}">Add an expense for this job</button><button class="btn" data-act="rbopen">Add a pile of receipts</button></div>`; }
     case "inv": return `<button class="btn primary" data-act="newinv" data-job="${j.id}">Create the invoice</button>`;
     case "paid": return `<div class="stack" style="gap:6px">${all("invoice").filter(i => i.jobId === j.id).map(i => `<div class="row between"><span class="small">${esc(i.number || "Invoice")} · ${money2(invTotal(i))}</span>${i.status === "paid" ? `<span class="pill paidinv">Paid ${esc(dAU(i.paidDate))}</span>` : `<button class="btn sm" data-act="go" data-v="invoice" data-id="${i.id}">Open it</button>`}</div>`).join("")}</div>`;
   }
@@ -1888,7 +2076,7 @@ function expItem(e, thumb){ const j = getDoc(e.jobId); return `<div class="item"
 function moneyExp(){
   const fy = UI.fy; const exps = all("expense").filter(e => inFY(e.date, fy)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const byCat = EXP_CATS.map(c => [c, sum(exps.filter(e => e.category === c), e => e.amount)]).filter(x => x[1]);
-  return `<div class="row between">${fySelect()}<div class="row"><button class="btn primary" data-act="newexp">${ic("plus")} Add expense</button></div></div>
+  return `<div class="row between">${fySelect()}<div class="row"><button class="btn" data-act="rbopen">${ic("img")} Add a pile of receipts</button><button class="btn primary" data-act="newexp">${ic("plus")} Add expense</button></div></div>
   ${byCat.length ? `<div class="card"><div class="head"><h2>By category</h2><b class="num">${money2(sum(exps, e => e.amount))}</b></div><div class="tablewrap"><table class="t"><tbody>${byCat.map(([c, v]) => `<tr><td>${c}</td><td class="n">${money2(v)}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
   <div class="card" style="padding:4px 12px"><div class="list">${exps.map(x => expItem(x, true)).join("") || `<div class="empty">No expenses in ${fyLabel(fy)}. Snap receipts as you buy so nothing gets missed at tax time.</div>`}</div></div>`;
 }
@@ -2102,7 +2290,7 @@ const ACT = {
       const h = sugHours(x.ph, u), l = ensureLog(x.date); l.entries = l.entries || [];
       let e = l.entries.find(y => y.jobId === j.id) || l.entries.find(y => !y.jobId && !y.did);
       if (!e) { e = {id:uid("e"), jobId:j.id, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
-      Object.assign(e, {jobId:j.id, site:(e.site || "").trim() || jobSite(j), start:h.start, finish:h.finish, breakMin:(mins(h.finish) - mins(h.start)) >= 300 ? brk : 0});
+      Object.assign(e, {jobId:j.id, site:(e.site || "").trim() || jobSite(j), start:h.start, finish:h.finish, breakMin:(mins(h.finish) - mins(h.start)) >= 300 ? brk : 0, est:"photos"});
       put(touch(l)); n++;
     });
     render(); toast(`Added ${n} day${n === 1 ? "" : "s"}. Tap a day in the day log to change the hours.`);
@@ -2115,7 +2303,7 @@ const ACT = {
       const from = worked.has(x.date) && site ? site : s.home || site; let to = x.name;
       if (!x.ll && from) { try { to = await findNear(x.name, from) || to; } catch(e){} }
       let k = ""; if (from) { try { k = await drivingKm(from, x.ll ? `${x.ll[0]}, ${x.ll[1]}` : to); } catch(e){} }
-      const l = ensureLog(x.date); (l.trips = l.trips || []).push({id:uid("tr"), from, to, why:"Picking up materials", jobId:j.id, km:k, back:true, kmAuto:!!k, ...(x.time ? {time:x.time} : {})});
+      const l = ensureLog(x.date); (l.trips = l.trips || []).push({id:uid("tr"), from, to, why:"Picking up materials", jobId:j.id, km:k, back:true, kmAuto:!!k, est:true, ...(x.time ? {time:x.time} : {})});
       put(touch(l)); n++; km += num(k) * 2;
     }
     render(); toast(`Added ${n} supplier run${n === 1 ? "" : "s"}${km ? `, ${round2(km)} km` : ""}. Check them in the day log.`);
@@ -2125,7 +2313,7 @@ const ACT = {
     const j = getDoc(d.id), s = S(), site = jobSite(j), days = j ? cuNoDrive(j) : []; if (!days.length || !s.home || !site) return;
     toast("Working out the distance…"); let km = "";
     try { km = await drivingKm(s.home, site); } catch(e){}
-    days.forEach(dt => { const l = getDoc("log_" + dt); (l.trips = l.trips || []).push({id:uid("tr"), from:s.home, to:site, why:"Travel to site and back", jobId:j.id, km, back:true, kmAuto:!!km}); put(touch(l)); });
+    days.forEach(dt => { const l = getDoc("log_" + dt); (l.trips = l.trips || []).push({id:uid("tr"), from:s.home, to:site, why:"Travel to site and back", jobId:j.id, km, back:true, kmAuto:!!km, est:true}); put(touch(l)); });
     render(); toast(km ? `Added a return trip on ${days.length} day${days.length === 1 ? "" : "s"}, ${round2(km * 2)} km each.` : `Added the trips, but couldn't work out the km right now. Open a day and tap Work out km.`);
   },
   tlname: async d => {
@@ -2141,31 +2329,47 @@ const ACT = {
     render(); toast(ok.work ? `Drives to ${ok.name} now count as work.` : `Saved ${ok.name}.`);
   },
   tlunname: d => { const s = S(); s.places = (s.places || []).filter((x, i) => i !== +d.i); put(s); render(); },
+  psopen: () => go("photosort"),
+  psfile: () => { const fp = $("#multipick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) psLoad(fs); }; fp.click(); },
+  pssave: async () => {
+    const gs = psGroups().filter(x => x.choice && x.fresh), total = sum(gs, x => x.fresh); if (!total) return;
+    let n = 0; const jobs = new Set();
+    for (const x of gs) {
+      let jid = x.choice;
+      if (jid === "__new") { const mine = x.ll && myPlace(x.ll), nm = x.kind === "place" ? (mine ? mine.name : rgName(x.ll) || "") : ""; jid = newJob({title:"Job from photos" + (x.date ? " " + dShort(x.date) : ""), quoteNo:nextNo("q"), site:nm && !/^Near /.test(nm) ? nm : ""}).id; }
+      const j = getDoc(jid); if (!j) continue; j.imgs = j.imgs || []; jobs.add(jid);
+      for (const it of x.items) {
+        if (it.dup) continue; n++; PS.busy = `Saving photo ${n} of ${total}…`; if (n === 1 || n % 4 === 0) render();
+        try { const id = await imgPut(await compressImage(it.file, 1400, 230000)), im = {id, cap:"", date:it.date || today(), onQuote:false}; if (it.date) { im.time = it.time; im.taken = true; } if (it.ll) im.ll = it.ll; j.imgs.push(im); } catch(e){ n--; }
+      }
+      put(touch(j));
+    }
+    PS.items.forEach(it => URL.revokeObjectURL(it.url)); Object.assign(PS, {items:[], pick:{}, busy:"", result:`Added ${n} photo${n === 1 ? "" : "s"} to ${jobs.size} job${jobs.size === 1 ? "" : "s"}.`});
+    const st = S(); st.psDone = today(); put(st); render(); window.scrollTo(0, 0);
+  },
+  rbopen: () => go("receipts"),
+  rbfile: () => { const fp = $("#multipick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) rbLoad(fs); }; fp.click(); },
+  rbsave: async () => {
+    const list = RB.list.filter(r => r.on && num(r.amount) > 0 && r.date); if (!list.length) return; let n = 0;
+    for (const r of list) { const receipt = await imgPut(r.data); put({id:uid("exp"), kind:"expense", amount:round2(num(r.amount)), date:r.date, supplier:(r.supplier || "").trim(), category:r.category, desc:"", jobId:r.jobId || "", items:r.items || "", receipt}); n++; }
+    RB.list = RB.list.filter(r => !list.includes(r)); const st = S(); st.rbDone = today(); put(st);
+    toast(`Saved ${n} expense${n === 1 ? "" : "s"}.`); if (!RB.list.length) { UI.moneyTab = "expenses"; nav("money"); } else render();
+  },
   tlsnooze: () => { lsSet("bcj_tlsnooze", addDays(today(), 3)); render(); },
   tlfile: () => { const fp = $("#tlpick"); fp.value = ""; fp.onchange = () => { const fs = [...fp.files]; if (fs.length) tlLoad(fs); }; fp.click(); },
   tlmonth: d => { TL.month = d.m; render(); window.scrollTo(0, 0); tlNames(); },
   tlapply: () => {
-    let nT = 0, nS = 0, km = 0;
-    tlMonth(TL.month).forEach(D => {
-      const drives = D.drives.filter(x => !x.added && tlPick(x).on).sort((a, b) => a.s - b.s), sites = Object.values(D.sites).filter(x => !x.added && tlPick(x).on);
-      if (!drives.length && !sites.length) return;
-      const l = ensureLog(D.date); l.entries = l.entries || []; l.trips = l.trips || [];
-      sites.forEach(x => {
-        const jobId = tlPick(x).jobId || x.jobId, j = getDoc(jobId);
-        let e = l.entries.find(e => e.jobId === jobId) || l.entries.find(e => !e.jobId && !e.did);
-        if (!e) { e = {id:uid("e"), jobId, site:"", start:"", finish:"", breakMin:"", did:""}; l.entries.push(e); }
-        Object.assign(e, {jobId, site:e.site || (j && j.site) || x.site, start:x.start, finish:x.finish, breakMin:(x.e - x.s) >= 5 * 3600e3 ? (S().breakMin ?? 45) : 0, tl:true}); nS++;
-      });
-      drives.forEach(x => {
-        const p = tlPick(x), rec = {from:tlRec(x.A), to:tlRec(x.B), why:p.why, jobId:p.jobId, km:x.km, back:false, tl:x.key, time:hmR(x.s), auto:false, kmAuto:false};
-        const old = x.repl && l.trips.find(t => t.id === x.repl.id);
-        if (old) Object.assign(old, rec); else l.trips.push({id:uid("tr"), ...rec}); nT++; km += x.km;
-      });
-      if (l.trips.every(t => t.time)) l.trips.sort((a, b) => a.time.localeCompare(b.time));
-      put(touch(l));
-    });
+    const r = tlApplyMonth(TL.month); const st = S(); st.tlLast = today(); put(st);
+    render(); toast(`Added ${[r.nT ? `${r.nT} trip${r.nT === 1 ? "" : "s"} (${round2(r.km)} km)` : "", r.nS ? `${r.nS} site time${r.nS === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") || "nothing"} to your day logs.`);
+  },
+  tlall: async () => {
+    const months = tlMonths();
+    if (!await confirmBox("Add all the work it found?", `Everything ticked in all ${months.length} month${months.length === 1 ? "" : "s"} goes into your day logs: site times and work drives. You can still change any day in the day log afterwards.`, "Add it all")) return;
+    while (TL.run) await new Promise(r => setTimeout(r, 300));
+    TL.allNames = true; try { await tlNames(); } finally { TL.allNames = false; }
+    let nT = 0, nS = 0, km = 0; months.forEach(m => { const r = tlApplyMonth(m); nT += r.nT; nS += r.nS; km += r.km; });
     const st = S(); st.tlLast = today(); put(st);
-    render(); toast(`Added ${[nT ? `${nT} trip${nT === 1 ? "" : "s"} (${round2(km)} km)` : "", nS ? `${nS} site time${nS === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ")} to your day logs.`);
+    render(); toast(`Added ${nS} site time${nS === 1 ? "" : "s"} and ${nT} trip${nT === 1 ? "" : "s"} (${round2(km)} km) from ${months.length} month${months.length === 1 ? "" : "s"}.`);
   },
   money: d => { UI.moneyTab = d.tab; nav("money"); },
   moneytab: d => { UI.moneyTab = d.tab; render(); },
