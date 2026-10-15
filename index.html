@@ -629,6 +629,30 @@ function pickImage(){ return new Promise(res => { const fp = $("#filepick"); fp.
 
 /* ---------- domain calcs ---------- */
 const jobRate = j => num(j.rate) || num(S().rate);
+/* day rate jobs: you charge for each day (or hour) worked plus the materials you buy, and invoice what was used */
+const isRate = j => !!j && j.pricing === "rate";
+const byHour = j => !!j && j.rateBy === "hour";
+const dayRateOf = j => num(j && j.dayRate) || num(S().dayRate) || jobRate(j || {}) * 8;
+const markupOf = j => num((j && j.markup) ?? S().markup);
+/* a short day, under 5 hours, counts as half a day */
+const dayQty = h => h <= 0 ? 0 : h < 5 ? 0.5 : 1;
+const daysTxt = n => n === 0.5 ? "½ day" : `${round2(n)} day${n === 1 ? "" : "s"}`;
+const BILLABLE = ["Materials","Equipment hire","Subcontractors","Other"];
+const billable = e => BILLABLE.includes(e.category || "Materials");
+function rateRunning(j){
+  const ents = logEntries().filter(e => e.jobId === j.id), exps = all("expense").filter(e => e.jobId === j.id && billable(e)), mk = 1 + markupOf(j) / 100;
+  const hours = sum(ents, entryHours), days = sum(ents, e => dayQty(entryHours(e)));
+  const labour = round2(byHour(j) ? hours * jobRate(j) : days * dayRateOf(j)), cost = sum(exps, e => e.amount), mat = round2(cost * mk);
+  const unEnts = ents.filter(e => !e.invId), unExps = exps.filter(e => !e.invId);
+  const unbilled = round2((byHour(j) ? sum(unEnts, entryHours) * jobRate(j) : sum(unEnts, e => dayQty(entryHours(e))) * dayRateOf(j)) + sum(unExps, e => e.amount) * mk);
+  return {hours, days, labour, cost, mat, total:round2(labour + mat), unbilled, unEnts, unExps};
+}
+/* a rough guide from the plan: its hours in 8 hour days, rounded up to the half day, plus the materials listed */
+function rateEstimate(j){
+  const q = quoteCalc(j); if (!q.hours && !q.matCost) return null;
+  const days = Math.ceil(q.hours / 8 * 2) / 2, labour = byHour(j) ? q.hours * jobRate(j) : days * dayRateOf(j);
+  return {hours:q.hours, days, labour, mat:q.mat, total:round2(labour + q.mat), tbc:q.tbc};
+}
 function secCalc(sec, job){
   const mk = 1 + num(job.markup ?? S().markup) / 100;
   const hours = sum(sec.tasks || [], t => t.hours) * (num(job.hoursFactor) || 1);
@@ -920,7 +944,7 @@ VIEWS.home = () => {
 };
 function jobItem(j, sub){
   const c = clientOf(j), q = quoteCalc(j);
-  return `<div class="item" data-act="openjob" data-id="${j.id}"><div class="main"><div class="t">${jobNo(j) ? `<span class="jno">${jobNo(j)}</span> - ` : ""}${esc(j.title || "Untitled job")}</div><div class="s">${esc([c.name, j.site].filter(Boolean).join(" · "))}${sub ? " · " + esc(sub) : ""}</div></div><div class="r">${jobPill(j)}<div class="small num" style="margin-top:2px">${q.total ? fmtMoney(q.total) + (q.tbc ? "+" : "") : ""}</div></div></div>`;
+  return `<div class="item" data-act="openjob" data-id="${j.id}"><div class="main"><div class="t">${jobNo(j) ? `<span class="jno">${jobNo(j)}</span> - ` : ""}${esc(j.title || "Untitled job")}</div><div class="s">${esc([c.name, j.site].filter(Boolean).join(" · "))}${sub ? " · " + esc(sub) : ""}</div></div><div class="r">${jobPill(j)}<div class="small num" style="margin-top:2px">${isRate(j) ? fmtMoney(byHour(j) ? jobRate(j) : dayRateOf(j)) + (byHour(j) ? "/h" : "/day") : q.total ? fmtMoney(q.total) + (q.tbc ? "+" : "") : ""}</div></div></div>`;
 }
 function invItem(i){
   const c = getDoc(i.clientId);
@@ -1026,12 +1050,29 @@ function jobPlan(j){
         <div class="line mat head" style="margin-top:6px"><span>Materials &amp; costs</span><span style="text-align:right">Qty</span><span style="text-align:right">$ each</span><span class="tbc">TBC</span><span></span></div>
         ${mats}
         <div><button class="btn ghost sm" data-act="addmat" data-id="${j.id}" data-i="${si}">${ic("plus")} Material</button></div>
-        <div class="sectotal"><span>Labour <b>${fmtH(c.hours)}</b> = <b>${money2(c.labour)}</b></span><span>Materials <b>${money2(c.mat)}</b>${c.tbc ? " + TBC" : ""}</span></div>
+        <div class="sectotal">${isRate(j) ? `<span>About <b>${fmtH(c.hours)}</b></span><span>Materials <b>${money2(c.mat)}</b>${c.tbc ? " + TBC" : ""}</span>` : `<span>Labour <b>${fmtH(c.hours)}</b> = <b>${money2(c.labour)}</b></span><span>Materials <b>${money2(c.mat)}</b>${c.tbc ? " + TBC" : ""}</span>`}</div>
       </div></div>`;
   }).join("");
-  const low = q.total * 0.9, high = q.total * 1.15;
+  const low = q.total * 0.9, high = q.total * 1.15, rate = isRate(j);
+  const how = `<div class="seg" style="margin-bottom:12px"><button class="${rate ? "" : "on"}" data-act="pricing" data-id="${j.id}" data-v="quote">Fixed quote</button><button class="${rate ? "on" : ""}" data-act="pricing" data-id="${j.id}" data-v="rate">Day rate + materials</button></div>`;
+  const price = rate ? (() => { const r = rateRunning(j), est = rateEstimate(j), inv = jobActual(j).invoiced;
+    return `<div class="card"><div class="head"><h2>Price</h2><span class="label">Not GST registered</span></div>${how}
+      <div class="grid3">
+        <div class="stat"><span class="k">${byHour(j) ? "Hours worked" : "Days worked"}</span><span class="v">${byHour(j) ? fmtH(r.hours) : daysTxt(r.days)}</span><span class="sub">${byHour(j) ? `At ${fmtMoney(jobRate(j))}/h` : `${fmtH(r.hours)} logged at ${fmtMoney(dayRateOf(j))}/day`}</span></div>
+        <div class="stat"><span class="k">Materials bought</span><span class="v">${money2(r.mat)}</span><span class="sub">${markupOf(j) ? `Cost ${money2(r.cost)} + ${markupOf(j)}%` : "At cost, from your receipts"}</span></div>
+        <div class="stat"><span class="k">To charge so far</span><span class="v" style="color:var(--orange)">${money2(r.total)}</span><span class="sub">${inv ? `${money2(inv)} invoiced, ${money2(r.unbilled)} not yet` : "Nothing invoiced yet"}</span></div>
+      </div>
+      <div class="fields" style="margin-top:12px">
+        <label class="field"><span>Charge by</span><select ${K("rateBy")}><option value="day" ${byHour(j) ? "" : "selected"}>The day</option><option value="hour" ${byHour(j) ? "selected" : ""}>The hour</option></select></label>
+        ${byHour(j) ? `<label class="field"><span>Hourly rate ($)</span><input type="number" step="1" inputmode="decimal" ${K("rate")} value="${j.rate ?? s.rate}"></label>` : `<label class="field"><span>Day rate ($)</span><input type="number" step="1" inputmode="decimal" ${K("dayRate")} value="${dayRateOf(j)}"></label>`}
+        <label class="field"><span>Materials markup (%)</span><input type="number" step="1" inputmode="decimal" ${K("markup")} value="${markupOf(j)}"></label>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">${byHour(j) ? "Every hour in your day log for this job is charged." : "Each day in your day log for this job counts as a day, or half a day if it's under 5 hours."} Receipts you add for this job (materials, hire, subbies) are charged ${markupOf(j) ? `with ${markupOf(j)}% on top` : "at cost"}. When you're ready, the invoice fills in the days and materials for you.</p>
+      ${est ? `<div class="note info" style="margin-top:10px">Your plan below comes to about <b>${byHour(j) ? fmtH(est.hours) : daysTxt(est.days)}</b>${est.mat ? ` and <b>${money2(est.mat)}</b> of materials` : ""}, roughly <b>${money2(est.total)}</b>${est.tbc ? " plus TBC items" : ""}. That goes on the quote as a guide.</div>` : ""}
+      <div class="row" style="margin-top:12px"><button class="btn primary" data-act="newinv" data-job="${j.id}">${ic("plus")} Create invoice</button><button class="btn" data-act="newexp" data-job="${j.id}">${ic("plus")} Add a receipt</button></div>
+    </div>`; })() : "";
   return `<div class="stack">
-    <div class="card"><div class="head"><h2>Price</h2><span class="label">Not GST registered</span></div>
+    ${rate ? price : `<div class="card"><div class="head"><h2>Price</h2><span class="label">Not GST registered</span></div>${how}
       <div class="grid3">
         <div class="stat"><span class="k">Labour</span><span class="v">${money2(q.labour)}</span><span class="sub">${fmtH(q.hours)} at ${fmtMoney(jobRate(j))}/h</span></div>
         <div class="stat"><span class="k">Materials</span><span class="v">${money2(q.mat)}</span><span class="sub">${q.tbc ? "Plus TBC items" : "Cost " + money2(q.matCost)}${num(j.markup ?? s.markup) ? ` + ${num(j.markup ?? s.markup)}% markup` : ""}</span></div>
@@ -1043,15 +1084,15 @@ function jobPlan(j){
         <label class="field"><span>Contingency (%)</span><input type="number" step="1" inputmode="decimal" ${K("contingency")} value="${j.contingency ?? s.contingency}"></label>
       </div>
       ${ef && Math.abs(ef.ratio - 1) > 0.05 ? `<div class="note info" style="margin-top:12px">Across ${ef.n} finished job${ef.n === 1 ? "" : "s"}, the real hours were ${Math.round(ef.ratio * 100)}% of what you quoted. <label class="check" style="margin-top:6px"><input type="checkbox" data-act="applyfactor" data-id="${j.id}" data-r="${ef.ratio.toFixed(3)}" ${num(j.hoursFactor) && j.hoursFactor !== 1 ? "checked" : ""}> Adjust this quote's hours by that amount</label></div>` : ""}
-    </div>
-    ${secs || `<div class="card empty">Break the job into sections you name yourself, like <b>Demo</b>, <b>Framing</b> or <b>Cladding</b>. Each section gets its own tasks, hours and materials, and they all roll up into the quote.</div>`}
+    </div>`}
+    ${secs || (isRate(j) ? `<div class="card empty">Sections are optional on a day rate job. Add them if you want a task list and a rough guide on the quote.</div>` : `<div class="card empty">Break the job into sections you name yourself, like <b>Demo</b>, <b>Framing</b> or <b>Cladding</b>. Each section gets its own tasks, hours and materials, and they all roll up into the quote.</div>`)}
     <div class="card"><div class="head"><h3>Check a price</h3></div>${bunningsBox()}<p class="tiny muted" style="margin:6px 0 0">Opens Bunnings in a new tab. Materials you've bought before fill their price in from your receipts as you type.</p></div>
     <div class="row"><button class="btn primary" data-act="addsec" data-id="${j.id}">${ic("plus")} Add section</button><button class="btn" data-act="shoplist" data-id="${j.id}">${ic("copy")} Copy shopping list</button><button class="btn" data-act="jobtab" data-tab="quote">See the quote</button></div>
   </div>`;
 }
 function jobQuote(j){
   const s = S(); const K = p => `data-k="${j.id}|${p}"`;
-  if (!(j.sections || []).length) return `<div class="card empty">Add sections and tasks in <b>Plan &amp; price</b> first, then the quote builds itself here.</div>`;
+  if (!(j.sections || []).length && !isRate(j)) return `<div class="card empty">Add sections and tasks in <b>Plan &amp; price</b> first, then the quote builds itself here.</div>`;
   return `<div class="stack">
     <div class="card"><div class="fields">
       <label class="field"><span>Quote number</span><input type="text" ${K("quoteNo")} value="${esc(j.quoteNo)}"></label>
@@ -1070,14 +1111,14 @@ function jobQuote(j){
   </div>`;
 }
 function jobCosts(j){
-  const a = jobActual(j), q = quoteCalc(j), vars = jobVariations(j);
-  const profit = (a.invoiced || q.total) - a.expense;
+  const a = jobActual(j), q = quoteCalc(j), vars = jobVariations(j), r = isRate(j) ? rateRunning(j) : null;
+  const profit = (a.invoiced || (r ? r.total : q.total)) - a.expense;
   const hrly = a.hours ? (profit / a.hours) : 0;
   return `<div class="stack">
     <div class="tiles">
-      <div class="tile"><div class="stat"><span class="k">Hours worked</span><span class="v">${fmtH(a.hours)}</span><span class="sub">Quoted ${fmtH(q.hours)}</span></div><div class="meter ${a.hours > q.hours ? "bad" : ""}" style="margin-top:6px"><i style="width:${q.hours ? Math.min(100, a.hours / q.hours * 100) : 0}%"></i></div></div>
-      <div class="tile"><div class="stat"><span class="k">Spent on materials &amp; costs</span><span class="v">${money2(a.expense)}</span><span class="sub">Quoted ${money2(q.matCost)} at cost</span></div></div>
-      <div class="tile"><div class="stat"><span class="k">Invoiced</span><span class="v">${money2(a.invoiced)}</span><span class="sub">${money2(a.paid)} paid</span></div></div>
+      <div class="tile"><div class="stat"><span class="k">Hours worked</span><span class="v">${fmtH(a.hours)}</span><span class="sub">${r ? (byHour(j) ? `At ${fmtMoney(jobRate(j))}/h` : `${daysTxt(r.days)} at ${fmtMoney(dayRateOf(j))}/day`) : `Quoted ${fmtH(q.hours)}`}</span></div>${r ? "" : `<div class="meter ${a.hours > q.hours ? "bad" : ""}" style="margin-top:6px"><i style="width:${q.hours ? Math.min(100, a.hours / q.hours * 100) : 0}%"></i></div>`}</div>
+      <div class="tile"><div class="stat"><span class="k">Spent on materials &amp; costs</span><span class="v">${money2(a.expense)}</span><span class="sub">${r ? `${money2(r.mat)} to charge the client` : `Quoted ${money2(q.matCost)} at cost`}</span></div></div>
+      <div class="tile"><div class="stat"><span class="k">Invoiced</span><span class="v">${money2(a.invoiced)}</span><span class="sub">${money2(a.paid)} paid${r && r.unbilled ? `, ${money2(r.unbilled)} not invoiced yet` : ""}</span></div></div>
       <div class="tile"><div class="stat"><span class="k">Earning per hour</span><span class="v">${a.hours ? fmtMoney(hrly) : "–"}</span><span class="sub">${a.invoiced ? "Invoiced" : "Quote"} less costs, over hours</span></div></div>
     </div>
     <div class="row"><button class="btn primary" data-act="newinv" data-job="${j.id}">${ic("plus")} Create invoice</button><button class="btn" data-act="newexp" data-job="${j.id}">${ic("plus")} Add expense</button><button class="btn" data-act="logfor" data-job="${j.id}">${ic("log")} Log time today</button></div>
@@ -1113,14 +1154,14 @@ function jobDetails(j){
 /* quote / invoice paper */
 function bizFoot(){ const s = S(); return `<div class="foot"><div><b>${esc(s.name)}</b><br>${esc(s.trading)}<br>ABN ${esc(s.abn)}</div><div style="text-align:right">${esc(s.phone)}<br>${esc(s.email)}<br>${esc(s.area)}</div></div>`; }
 function quotePaper(j){
-  const s = S(), q = quoteCalc(j), c = clientOf(j); const mk = 1 + num(j.markup ?? s.markup) / 100;
-  const showMat = j.showMat || s.showMat, hideH = j.hideHours;
+  const s = S(), q = quoteCalc(j), c = clientOf(j); const mk = 1 + num(j.markup ?? s.markup) / 100, rate = isRate(j);
+  const showMat = rate ? "names" : j.showMat || s.showMat, hideH = j.hideHours || rate;
   const qd = j.quoteDate || today(), valid = addDays(qd, num(j.validDays ?? s.validDays) || 30);
   const rows = (j.sections || []).map((sec, si) => {
     const sc = q.secs[si];
-    let r = `<tr class="sec brk"><td>${esc(sec.name || "Section " + (si + 1))}</td><td class="n">${showMat !== "hide" ? (sc.mat ? money2(sc.mat) : "") + (sc.tbc ? (sc.mat ? " + TBC" : "TBC") : "") : ""}</td><td class="n">${hideH ? "" : sc.hours ? fmtH(sc.hours) : ""}</td></tr>`;
+    let r = `<tr class="sec brk"><td>${esc(sec.name || "Section " + (si + 1))}</td><td class="n">${showMat !== "hide" && !rate ? (sc.mat ? money2(sc.mat) : "") + (sc.tbc ? (sc.mat ? " + TBC" : "TBC") : "") : ""}</td><td class="n">${hideH ? "" : sc.hours ? fmtH(sc.hours) : ""}</td></tr>`;
     r += (sec.tasks || []).filter(t => t.text).map(t => `<tr class="task brk"><td>${esc(t.text)}</td><td></td><td></td></tr>`).join("");
-    if (showMat === "items") r += (sec.mats || []).filter(m => m.text).map(m => `<tr class="mat brk"><td>${esc(m.text)}${num(m.qty) > 1 ? ` <span style="color:#8a9686">× ${num(m.qty)}</span>` : ""}</td><td class="n">${m.tbc ? "TBC" : money2(num(m.qty || 1) * num(m.cost) * mk)}</td><td></td></tr>`).join("");
+    if (showMat === "items" || showMat === "names") r += (sec.mats || []).filter(m => m.text).map(m => `<tr class="mat brk"><td>${esc(m.text)}${num(m.qty) > 1 ? ` <span style="color:#8a9686">× ${num(m.qty)}</span>` : ""}</td><td class="n">${showMat === "names" ? "" : m.tbc ? "TBC" : money2(num(m.qty || 1) * num(m.cost) * mk)}</td><td></td></tr>`).join("");
     return r + `<tr class="secend"><td colspan="3"></td></tr>`;
   }).join("");
   const imgs = (j.imgs || []).filter(im => im.onQuote !== false);
@@ -1130,14 +1171,21 @@ function quotePaper(j){
     <div class="parties"><div><div class="lbl">Prepared for</div><div class="who">${esc(c.name)}</div>${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}${esc(j.site || c.address || "")}</div>
       <div><div class="lbl">From</div><div class="who">${esc(s.name)}</div>${esc(s.trading)}<br>${esc(s.phone)}<br>${esc(s.email)}</div></div>
     <div class="scope brk"><div class="lbl">The job</div><h2>${esc(j.title || "")}</h2>${j.scope ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(j.scope)}</div>` : ""}</div>
-    <table><thead><tr><th>Description</th><th class="n" style="width:130px">${showMat !== "hide" ? "Materials" : ""}</th><th class="n" style="width:80px">${hideH ? "" : "Time"}</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="totals brk">
+    ${rows ? `<table><thead><tr><th>${rate ? "The work" : "Description"}</th><th class="n" style="width:130px">${showMat !== "hide" && !rate ? "Materials" : ""}</th><th class="n" style="width:80px">${hideH ? "" : "Time"}</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+    ${rate ? (() => { const est = rateEstimate(j), m = markupOf(j); return `<div class="totals brk">
+      <div><span>${byHour(j) ? "Hourly rate" : "Day rate"}</span><span>${money2(byHour(j) ? jobRate(j) : dayRateOf(j))} per ${byHour(j) ? "hour" : "day"}</span></div>
+      <div><span>Materials</span><span>${m ? `Cost plus ${m}%` : "At cost"}</span></div>
+      ${est ? `<div><span>Estimate, as a guide</span><span>About ${byHour(j) ? fmtH(est.hours) : daysTxt(est.days)}, ${money2(est.total)}${est.tbc ? " + TBC" : ""}</span></div>` : ""}
+      <div class="grand"><span>You pay for</span><span>Days worked + materials</span></div>
+      <div class="gst">Not registered for GST. No GST has been charged.</div>
+    </div>
+    <div class="scope brk" style="margin-top:10px">I buy the materials as the job goes. At the end you're invoiced for the ${byHour(j) ? "hours" : "days"} worked and the materials bought, with receipts available.${byHour(j) ? "" : " A short day of under 5 hours is charged as half a day."}</div>`; })() : `<div class="totals brk">
       <div><span>Labour${hideH ? "" : ` (${fmtH(q.hours)} @ ${fmtMoney(jobRate(j))}/h)`}</span><span>${money2(q.labour)}</span></div>
       <div><span>Materials${q.tbc ? " (excl. TBC items)" : ""}</span><span>${money2(q.mat)}</span></div>
       ${q.cont ? `<div><span>Contingency</span><span>${money2(q.cont)}</span></div>` : ""}
       <div class="grand"><span>Total</span><span>${money2(q.total)}${q.tbc ? " + TBC" : ""}</span></div>
       <div class="gst">Not registered for GST. No GST has been charged.</div>
-    </div>
+    </div>`}
     <div class="terms brk"><h3>Terms</h3>${esc(j.terms || s.quoteTerms)}</div>
     <div class="accept brk"><div>Accepted by (name and signature)</div><div>Date</div></div>
     <div class="brk">${bizFoot()}</div>
@@ -1146,10 +1194,12 @@ function quotePaper(j){
 }
 function invPaper(i){
   const s = S(), c = getDoc(i.clientId) || {name:i.billTo || ""};
-  const days = i.mode === "days"; const tot = invTotal(i); const hrs = sum(i.lines || [], l => l.unit === "h" ? l.qty : 0);
-  const rows = (i.lines || []).map(l => days
-    ? `<tr class="brk"><td style="white-space:nowrap"><b>${l.date ? dAU(l.date) : ""}</b><br>${l.date ? DOW[parseD(l.date).getDay()] : ""}</td><td>${esc(l.site || "")}</td><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${esc(l.time || "")}${l.time ? "<br>" : ""}${l.unit === "h" ? fmtH(l.qty) : num(l.qty) !== 1 ? num(l.qty) : ""}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`
-    : `<tr class="brk"><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${l.unit === "h" ? fmtH(l.qty) + " @ " + money2(l.rate) : num(l.qty) !== 1 ? num(l.qty) + " × " + money2(l.rate) : ""}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`).join("");
+  const days = i.mode === "days"; const tot = invTotal(i); const hrs = sum(i.lines || [], l => l.unit === "h" ? l.qty : 0), dys = sum(i.lines || [], l => l.unit === "day" ? num(l.qty) : 0);
+  const matT = round2(sum((i.lines || []).filter(l => l.unit === "mat"), l => num(l.qty) * num(l.rate)));
+  const qtyTxt = l => l.unit === "h" ? fmtH(l.qty) : l.unit === "day" ? daysTxt(num(l.qty)) : num(l.qty) !== 1 ? num(l.qty) : "";
+  const rows = (i.lines || []).map((l, x, a) => days
+    ? `${l.unit === "mat" && (!x || a[x - 1].unit !== "mat") ? `<tr class="sec brk"><td colspan="5">Materials</td></tr>` : ""}<tr class="brk"><td style="white-space:nowrap"><b>${l.date ? dAU(l.date) : ""}</b><br>${l.date ? DOW[parseD(l.date).getDay()] : ""}</td><td>${esc(l.site || "")}</td><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${l.unit === "mat" ? "" : `${esc(l.time || "")}${l.time ? "<br>" : ""}${qtyTxt(l)}`}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`
+    : `<tr class="brk"><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${l.unit === "h" || l.unit === "day" ? qtyTxt(l) + " @ " + money2(l.rate) : num(l.qty) !== 1 ? num(l.qty) + " × " + money2(l.rate) : ""}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`).join("");
   return `<div class="paper">
     <div class="ph">${logoHtml()}<div class="ttl"><h1>INVOICE</h1><div class="meta"><span>Invoice no.</span><b>${esc(i.number)}</b><span>Date</span><b>${dAU(i.date)}</b>${i.due ? `<span>Due</span><b>${dAU(i.due)}</b>` : ""}</div></div></div>
     <div class="rule"></div>
@@ -1158,9 +1208,10 @@ function invPaper(i){
     ${i.ref ? `<div class="scope brk"><div class="lbl">For</div><h2>${esc(i.ref)}</h2></div>` : ""}
     <table><thead><tr>${days ? `<th style="width:92px">Date</th><th style="width:150px">Site</th><th>Description</th><th class="n" style="width:110px">Time</th>` : `<th>Description</th><th class="n" style="width:150px"></th>`}<th class="n" style="width:96px">Amount</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="totals brk">
-      ${hrs ? `<div><span>Total hours</span><span>${fmtH(hrs)}</span></div>` : ""}
+      ${hrs ? `<div><span>Total hours</span><span>${fmtH(hrs)}</span></div>` : ""}${dys ? `<div><span>Days worked</span><span>${daysTxt(dys)}</span></div>` : ""}
+      ${matT && matT !== tot ? `<div><span>Labour</span><span>${money2(tot - matT)}</span></div><div><span>Materials</span><span>${money2(matT)}</span></div>` : ""}
       <div class="grand"><span>Total due</span><span>${money2(tot)}</span></div>
-      <div class="gst">Not registered for GST. No GST has been charged.</div>
+      <div class="gst">Not registered for GST. No GST has been charged.${matT ? " Receipts for materials available on request." : ""}</div>
     </div>
     <div class="pay brk"><div class="lbl">Payment information</div><span>Account name</span><b>${esc(s.bankName || s.name)}</b><span>BSB</span><b>${esc(s.bsb || "—")}</b><span>Account no.</span><b>${esc(s.acct || "—")}</b><span>Reference</span><b>${esc(i.number)}</b></div>
     ${(i.note || s.invTerms) ? `<div class="terms brk">${esc(i.note || s.invTerms)}</div>` : ""}
@@ -1686,7 +1737,8 @@ function cuSteps(){
   jobs.forEach(j => {
     const st = j.status || "lead"; if (st === "lost" || st === "lead") return;
     const invs = all("invoice").filter(i => i.jobId === j.id);
-    js(j, 3, "prices", "Put prices on the quote", quoteCalc(j).total > 0 && !cuNoPrice(j).length, {why:"Every material needs a price so the job's totals and profit are right.", skipTxt:"Not quoted"});
+    if (isRate(j)) js(j, 3, "prices", "Set your day rate", num(j.dayRate) > 0 || byHour(j) && num(j.rate) > 0, {why:"This job is charged by the day plus materials, so it needs your rate. The invoice works out the rest from your day logs and receipts.", skipTxt:"Not needed"});
+    else js(j, 3, "prices", "Put prices on the quote", quoteCalc(j).total > 0 && !cuNoPrice(j).length, {why:"Every material needs a price so the job's totals and profit are right.", skipTxt:"Not quoted"});
     js(j, 3, "qdate", "When did you send the quote?", j.quoteDate, {why:"The quote date goes on the quote and shows how long it took to win.", skipTxt:"Wasn't quoted"});
     if (!CU_WORK.includes(st)) return;
     js(j, 3, "days", "Add the days you worked", cuDays(j).length, {why:"Your hours on each day. They show what the job really took and go on day-rate invoices.", skipTxt:"No hours to log"});
@@ -1731,7 +1783,8 @@ function cuControls(x){
         ${sp ? `<div class="row" style="margin-top:8px">${nm ? `<button class="btn sm" data-act="cusitephoto" data-id="${j.id}" data-v="${esc(nm.replace(/^Near /, ""))}">Your photos were taken ${/^Near /.test(nm) ? "near" : "at"} ${esc(nm.replace(/^Near /, ""))}</button>` : `<span class="small muted">${nm === undefined ? "Looking up where your photos were taken…" : "Your photos show where it was."}</span>`}<a class="small" href="https://www.google.com/maps/search/?api=1&query=${sp[0]},${sp[1]}" target="_blank" rel="noopener">See it on the map</a></div>` : ""}`; }
     case "visit": { const pv = photoVisit(j), v = j.visit || {};
       return `<label class="field" style="max-width:220px"><span>Went to look on</span><input type="date" ${JK("visit.date")} value="${esc(v.date || "")}"></label>${pv && !v.date ? `<div style="margin-top:8px"><button class="btn sm" data-act="cuvisit" data-id="${j.id}" data-d="${pv}">${dShort(pv)}, the day of your first photos</button></div>` : ""}`; }
-    case "prices": { const miss = cuNoPrice(j); return `<p class="small" style="margin:0 0 8px">${quoteCalc(j).total > 0 ? `Quote total so far <b>${money2(quoteCalc(j).total)}</b>.` : "No prices on it yet."}${miss.length ? ` ${miss.length} material${miss.length === 1 ? " has" : "s have"} no price: ${esc(miss.slice(0, 4).map(m => m.text.trim()).join(", "))}${miss.length > 4 ? "…" : ""}.` : ""}</p><button class="btn primary" data-act="cugo" data-v="plan" data-id="${j.id}">Open the job's plan</button>`; }
+    case "prices": { if (isRate(j)) return `<p class="small" style="margin:0 0 8px">Charged at <b>${fmtMoney(byHour(j) ? jobRate(j) : dayRateOf(j))} per ${byHour(j) ? "hour" : "day"}</b> plus materials ${markupOf(j) ? `with ${markupOf(j)}% on top` : "at cost"}.</p><div class="row"><button class="btn primary" data-act="cugo" data-v="plan" data-id="${j.id}">Open the job's price</button><button class="btn ghost sm" data-act="pricing" data-id="${j.id}" data-v="quote">It's a fixed quote</button></div>`;
+      const miss = cuNoPrice(j); return `<p class="small" style="margin:0 0 8px">${quoteCalc(j).total > 0 ? `Quote total so far <b>${money2(quoteCalc(j).total)}</b>.` : "No prices on it yet."}${miss.length ? ` ${miss.length} material${miss.length === 1 ? " has" : "s have"} no price: ${esc(miss.slice(0, 4).map(m => m.text.trim()).join(", "))}${miss.length > 4 ? "…" : ""}.` : ""}</p><div class="row"><button class="btn primary" data-act="cugo" data-v="plan" data-id="${j.id}">Open the job's plan</button><button class="btn ghost sm" data-act="pricing" data-id="${j.id}" data-v="rate">It's charged by the day</button></div>`; }
     case "qdate": return `<label class="field" style="max-width:220px"><span>Quote sent on</span><input type="date" ${JK("quoteDate")} value="${esc(j.quoteDate)}"></label>`;
     case "days": { const ds = cuDays(j), h = sum(logEntries().filter(e => e.jobId === j.id), entryHours), sg = cuDaySugs(j), u = usualHours(), nOn = sg.filter(x => cuSugOn(j, x)).length;
       const why = x => [x.ph ? `${x.ph.n} photo${x.ph.n === 1 ? "" : "s"}${x.ph.first ? `, ${t12(x.ph.first)}${x.ph.last !== x.ph.first ? " to " + t12(x.ph.last) : ""}` : ""}` : "", ...x.trips.map(t => `drove to ${esc(placeName(t.to) || "a stop")}`), ...x.exps.map(e => `${esc(e.supplier || "a")} receipt`)].filter(Boolean).join(" · ");
@@ -1928,7 +1981,7 @@ VIEWS.invoice = () => {
   const lines = (i.lines || []).map((l, x) => `<div class="entry">
     <div class="row" style="align-items:flex-start">${days ? `<label class="field" style="width:150px"><span>Date</span><input type="date" ${K(`lines.${x}.date`)} value="${esc(l.date)}"></label><label class="field grow"><span>Site</span><input type="text" ${K(`lines.${x}.site`)} value="${esc(l.site)}"></label>` : ""}${days ? "" : `<label class="field grow"><span>Description</span><textarea ${K(`lines.${x}.desc`)} style="min-height:48px">${esc(l.desc)}</textarea></label>`}<button class="x" data-act="rmrow" data-id="${i.id}" data-p="lines" data-i="${x}" aria-label="Remove line">${ic("x")}</button></div>
     ${days ? `<label class="field"><span>Description</span><input type="text" ${K(`lines.${x}.desc`)} value="${esc(l.desc)}"></label>` : ""}
-    <div class="fields">${days ? `<label class="field"><span>Time</span><input type="text" ${K(`lines.${x}.time`)} value="${esc(l.time)}" placeholder="7am – 4pm"></label>` : ""}<label class="field"><span>${l.unit === "h" ? "Hours" : "Qty"}</span><input type="number" step="any" inputmode="decimal" ${K(`lines.${x}.qty`)} value="${l.qty ?? 1}"></label><label class="field"><span>${l.unit === "h" ? "Rate /h" : "Price"}</span><input type="number" step="any" inputmode="decimal" ${K(`lines.${x}.rate`)} value="${l.rate ?? ""}"></label><div class="field"><span>Amount</span><div class="hoursbadge" style="padding-top:6px">${money2(num(l.qty) * num(l.rate))}</div></div></div>
+    <div class="fields">${days ? `<label class="field"><span>Time</span><input type="text" ${K(`lines.${x}.time`)} value="${esc(l.time)}" placeholder="7am – 4pm"></label>` : ""}<label class="field"><span>${l.unit === "h" ? "Hours" : l.unit === "day" ? "Days" : "Qty"}</span><input type="number" step="${l.unit === "day" ? "0.5" : "any"}" inputmode="decimal" ${K(`lines.${x}.qty`)} value="${l.qty ?? 1}"></label><label class="field"><span>${l.unit === "h" ? "Rate /h" : l.unit === "day" ? "Day rate" : "Price"}</span><input type="number" step="any" inputmode="decimal" ${K(`lines.${x}.rate`)} value="${l.rate ?? ""}"></label><div class="field"><span>Amount</span><div class="hoursbadge" style="padding-top:6px">${money2(num(l.qty) * num(l.rate))}</div></div></div>
   </div>`).join("");
   return `<div class="stack">
     <div class="row between"><div class="row">${invPill(i)}<b class="num">${money2(invTotal(i))}</b></div>
@@ -1944,7 +1997,7 @@ VIEWS.invoice = () => {
     <label class="field" style="margin-top:10px"><span>For (shows under the header, optional)</span><input type="text" ${K("ref")} value="${esc(i.ref)}" placeholder="e.g. Deck at 12 Smith St, Merewether"></label>
     <div class="row" style="margin-top:10px"><span class="small muted">Layout</span><div class="seg"><button class="${days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="days">Day by day (labour hire)</button><button class="${!days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="items">Line items</button></div></div></div>
     ${lines}
-    <div class="row"><button class="btn" data-act="addline" data-id="${i.id}" data-u="h">${ic("plus")} Hours line</button><button class="btn" data-act="addline" data-id="${i.id}" data-u="">${ic("plus")} Item line</button><button class="btn" data-act="pulllogs" data-id="${i.id}">${ic("log")} Add days from logs</button></div>
+    <div class="row">${(() => { const j = getDoc(i.jobId); return isRate(j) && !byHour(j) ? `<button class="btn" data-act="addline" data-id="${i.id}" data-u="day">${ic("plus")} Day line</button>` : `<button class="btn" data-act="addline" data-id="${i.id}" data-u="h">${ic("plus")} Hours line</button>`; })()}<button class="btn" data-act="addline" data-id="${i.id}" data-u="">${ic("plus")} Item line</button><button class="btn" data-act="pulllogs" data-id="${i.id}">${ic("log")} Add days from logs</button>${rateJobsFor(i).length ? `<button class="btn" data-act="pullexps" data-id="${i.id}">${ic("plus")} Add receipts</button>` : ""}</div>
     <label class="field"><span>Note on invoice</span><textarea ${K("note")} placeholder="${esc(S().invTerms)}">${esc(i.note)}</textarea></label>
     <div class="row"><button class="btn primary" data-act="invpdf" data-id="${i.id}">${ic("pdf")} Save invoice PDF</button><button class="btn" data-act="invmsg" data-id="${i.id}">${ic("copy")} Copy message</button>${i.status === "sent" ? `<button class="btn" data-act="invremind" data-id="${i.id}">${ic("copy")} Copy payment reminder</button>` : ""}<button class="btn danger" data-act="delinv" data-id="${i.id}">Delete</button></div>
     ${!S().bsb ? `<div class="note">Your bank details are blank, so the invoice shows dashes. Add your BSB and account number in <a href="#" data-act="nav" data-v="settings">Settings</a>.</div>` : ""}
@@ -1964,7 +2017,7 @@ VIEWS.settings = () => {
       <div class="row" style="margin-top:12px;align-items:center"><div class="logoprev">${s.logoImg ? `<img data-img="${esc(s.logoImg)}" alt="Your logo">` : `<span class="muted small">No logo yet</span>`}</div><button class="btn" data-act="setlogo">${ic("img")} ${s.logoImg ? "Change logo" : "Add your logo"}</button>${s.logoImg ? `<button class="btn ghost" data-act="rmlogo">Remove</button>` : ""}</div>
       <p class="small muted" style="margin-bottom:0">Your logo and details are kept in your own account and show on your quotes and invoices.</p></div>
     <div class="card"><h2>Bank details for invoices</h2><div class="fields">${f("bankName","Account name")}${f("bsb","BSB","text",'inputmode="numeric"')}${f("acct","Account number","text",'inputmode="numeric"')}</div><p class="small muted">${IS_PWA ? "Saved in your own Google account" : "Saved to your claude.ai account"} and only printed on invoices you make.</p></div>
-    <div class="card"><h2>Pricing defaults</h2><div class="fields">${f("rate","Hourly rate ($)","number")}${f("markup","Materials markup (%)","number")}${f("contingency","Contingency (%)","number")}${f("validDays","Quotes valid for (days)","number")}${f("payDays","Invoices due after (days)","number")}${f("breakMin","Usual breaks per day (min)","number")}</div></div>
+    <div class="card"><h2>Pricing defaults</h2><div class="fields">${f("rate","Hourly rate ($)","number")}${f("dayRate","Day rate ($)","number", `placeholder="${num(s.rate) * 8 || ""}"`)}${f("markup","Materials markup (%)","number")}${f("contingency","Contingency (%)","number")}${f("validDays","Quotes valid for (days)","number")}${f("payDays","Invoices due after (days)","number")}${f("breakMin","Usual breaks per day (min)","number")}</div></div>
     <div class="card"><h2>Wording</h2><label class="field"><span>Quote terms</span><textarea ${K("quoteTerms")} style="min-height:110px">${esc(s.quoteTerms)}</textarea></label><label class="field" style="margin-top:10px"><span>Invoice note</span><textarea ${K("invTerms")}>${esc(s.invTerms)}</textarea></label>
       <div class="fields" style="margin-top:10px">${f("nextQuote","Next quote number","number")}${f("nextInv","Next invoice number","number")}</div>${peekNo("q") !== (num(s.nextQuote) || 1) ? `<p class="tiny muted" style="margin:6px 0 0">#${String(num(s.nextQuote) || 1).padStart(4, "0")} is already used, so the next new job will be #${String(peekNo("q")).padStart(4, "0")}.</p>` : ""}</div>
     <div class="card"><div class="head"><h2>My materials prices</h2><button class="btn sm" data-act="addpl">${ic("plus")} Add item</button></div>
@@ -2142,7 +2195,9 @@ const ACT = {
   async dellog(d){ if (await confirmBox("Delete this day's log?", "The hours, trips, extras and photos for this day will be removed.", "Delete", true)) { (getDoc(d.id)?.photos || []).forEach(ph => imgDel(ph.id)); del(d.id); render(); } },
   rmrow: d => { const doc = getDoc(d.id); const arr = d.p.split(".").reduce((o, k) => o[k], doc); const [gone] = arr.splice(+d.i, 1); put(touch(doc));
     if (doc.kind === "invoice" && gone && gone.entryId) all("log").forEach(l => (l.entries || []).forEach(e => { if (e.id === gone.entryId && e.invId === doc.id) { delete e.invId; put(l); } }));
+    if (doc.kind === "invoice" && gone && gone.expId) { const e = getDoc(gone.expId); if (e && e.invId === doc.id) { delete e.invId; put(e); } }
     render(); },
+  pricing: d => { const j = getDoc(d.id); j.pricing = d.v; if (d.v === "rate") { if (j.dayRate == null) j.dayRate = dayRateOf(j); if (j.markup == null) j.markup = 0; } put(touch(j)); render(); },
   addsec: d => { const j = getDoc(d.id); (j.sections = j.sections || []).push({id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}); put(touch(j)); render(); const ins = document.querySelectorAll(".section input.title"); ins[ins.length - 1]?.focus(); },
   async rmsec(d){ const j = getDoc(d.id); const sec = j.sections[+d.i]; if ((sec.tasks || []).some(t => t.text) || (sec.mats || []).length) { if (!await confirmBox("Delete section?", `"${sec.name || "This section"}" and its tasks and materials will be removed.`, "Delete", true)) return; } j.sections.splice(+d.i, 1); put(touch(j)); render(); },
   mvsec: d => { const j = getDoc(d.id); const i = +d.i, k = i + (+d.d); if (k < 0 || k >= j.sections.length) return; [j.sections[i], j.sections[k]] = [j.sections[k], j.sections[i]]; put(j); render(); },
@@ -2203,19 +2258,21 @@ const ACT = {
     put(touch(j)); render(); toast(dated ? `Photos saved. ${dated === list.length ? "All" : dated} had the date taken${placed ? `, ${placed === list.length ? "all" : placed} with where` : ""}.` : "Photos saved"); },
   async rmimg(d){ const j = getDoc(d.id); const [im] = j.imgs.splice(+d.i, 1); put(j); imgDel(im.id); render(); },
   quotepdf: async d => { const j = getDoc(d.id); if (!j.quoteNo) { j.quoteNo = nextNo("q"); put(j); } if (!j.quoteDate) { j.quoteDate = today(); put(j); } await savePdf(quotePaper(j), `Quote ${j.quoteNo} ${clientOf(j).name || j.title}.pdf`); },
-  quotemsg: d => { const j = getDoc(d.id), c = clientOf(j), q = quoteCalc(j), s = S(); copyText(`Hi ${(c.name || "there").split(" ")[0]},\n\nThanks for having me out to look at the job. Please find attached my quote ${j.quoteNo || ""} for ${j.title || "the work"}${j.site ? " at " + j.site : ""}.\n\nThe total comes to ${money2(q.total)}${q.tbc ? " plus a few items marked TBC that I'll price once confirmed" : ""}. No GST applies as I'm not registered for GST. The quote is valid for ${j.validDays ?? s.validDays} days.\n\nHappy to answer any questions. Just reply here or give me a call on ${s.phone}.\n\nCheers,\n${s.name.split(" ")[0]}\n${s.trading}`); },
+  quotemsg: d => { const j = getDoc(d.id), c = clientOf(j), q = quoteCalc(j), s = S(); copyText(`Hi ${(c.name || "there").split(" ")[0]},\n\nThanks for having me out to look at the job. Please find attached my quote ${j.quoteNo || ""} for ${j.title || "the work"}${j.site ? " at " + j.site : ""}.\n\n${isRate(j) ? `I'll charge ${money2(byHour(j) ? jobRate(j) : dayRateOf(j))} per ${byHour(j) ? "hour" : "day"} plus materials ${markupOf(j) ? `at cost plus ${markupOf(j)}%` : "at cost"}, and invoice you at the end for the ${byHour(j) ? "hours" : "days"} worked and the materials bought.${rateEstimate(j) ? ` As a rough guide it should come to about ${money2(rateEstimate(j).total)}.` : ""}` : `The total comes to ${money2(q.total)}${q.tbc ? " plus a few items marked TBC that I'll price once confirmed" : ""}.`} No GST applies as I'm not registered for GST. The quote is valid for ${j.validDays ?? s.validDays} days.\n\nHappy to answer any questions. Just reply here or give me a call on ${s.phone}.\n\nCheers,\n${s.name.split(" ")[0]}\n${s.trading}`); },
   invpdf: async d => { const i = getDoc(d.id); await savePdf(invPaper(i), `Invoice ${i.number} ${getDoc(i.clientId)?.name || ""}.pdf`); if (i.status === "draft" || !i.status) { i.status = "sent"; put(i); render(); } },
   invmsg: d => { const i = getDoc(d.id), c = getDoc(i.clientId) || {}, s = S(); copyText(`Hi ${(c.name || "there").split(" ")[0]},\n\nPlease find attached invoice ${i.number} for ${money2(invTotal(i))}${i.due ? ", due " + dAU(i.due) : ""}.\n\nBank: ${s.bankName || s.name}\nBSB: ${s.bsb || "____"}\nAccount: ${s.acct || "____"}\nReference: ${i.number}\n\nThanks,\n${s.name.split(" ")[0]}`); },
   async newinv(d){
     const clients = all("client").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     const j = d.job ? getDoc(d.job) : null;
-    const prev = j ? all("invoice").filter(i => i.jobId === j.id) : [];
+    const prev = j ? all("invoice").filter(i => i.jobId === j.id) : [], rate = isRate(j);
+    const r = rate ? rateRunning(j) : null, first = rate ? [...r.unEnts.map(e => e.date), ...r.unExps.map(e => e.date)].filter(Boolean).sort()[0] : "";
     const ok = await openModal(`<h2>New invoice</h2>
       ${j ? `<p class="small muted" style="margin:0">For <b>${esc(jobLabel(j))}</b></p>` : `<label class="field"><span>Bill to</span>${clientPicker({id:"m_cli"})}</label>`}
       <label class="field"><span>Start from</span><select id="m_from">
-        ${j ? `<option value="quote">${prev.length ? "Final invoice: quote + extras, less what's been invoiced" : "The full quote + any extras"}</option><option value="deposit">A deposit on the quote</option>` : ""}
-        <option value="days">Days from my day logs (not yet billed)</option><option value="blank">Blank invoice</option></select></label>
-      <div class="fields"><label class="field"><span>From date</span><input type="date" id="m_d1" value="${addDays(today(), -14)}"></label><label class="field"><span>To date</span><input type="date" id="m_d2" value="${today()}"></label><label class="field"><span>Deposit %</span><input type="number" id="m_dep" value="${S().deposit || 30}"></label></div>
+        ${rate ? `<option value="rate">Days worked and materials not yet charged (${money2(r.unbilled)})</option>` : ""}
+        ${j && !rate ? `<option value="quote">${prev.length ? "Final invoice: quote + extras, less what's been invoiced" : "The full quote + any extras"}</option><option value="deposit">A deposit on the quote</option>` : ""}
+        ${rate ? "" : `<option value="days">Days from my day logs (not yet billed)</option>`}<option value="blank">Blank invoice</option></select></label>
+      <div class="fields"><label class="field"><span>From date</span><input type="date" id="m_d1" value="${first && first < addDays(today(), -14) ? first : addDays(today(), -14)}"></label><label class="field"><span>To date</span><input type="date" id="m_d2" value="${today()}"></label><label class="field"><span>Deposit %</span><input type="number" id="m_dep" value="${S().deposit || 30}"></label></div>
       <p class="small muted" style="margin:0">Dates are used for day logs. Deposit % is used for deposits.</p>
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Create</button></div>`,
       () => ({cli:j ? j.clientId : clientFromBox("m_cli"), from:mval("m_from"), d1:mval("m_d1"), d2:mval("m_d2"), dep:num(mval("m_dep"))}));
@@ -2229,18 +2286,20 @@ const ACT = {
       prev.forEach(p => inv.lines.push({id:uid("l"), desc:`Less invoice ${p.number}`, qty:1, rate:-invTotal(p), unit:""}));
     } else if (ok.from === "deposit" && j) {
       const q = quoteCalc(j); inv.lines.push({id:uid("l"), desc:`Deposit (${ok.dep}%) on quote ${j.quoteNo || ""} for ${j.title}`, qty:1, rate:round2(q.total * ok.dep / 100), unit:""});
-    } else if (ok.from === "days") {
-      inv.mode = "days"; addLogLines(inv, ok.d1, ok.d2, j ? j.id : null);
-      if (!inv.lines.length) toast("No unbilled days in that range for this client. Add lines by hand.");
+    } else if (ok.from === "days" || ok.from === "rate") {
+      inv.mode = "days"; addLogLines(inv, ok.d1, ok.d2, j ? j.id : null); addExpLines(inv, rateJobsFor(inv), ok.d1, ok.d2);
+      if (!inv.lines.length) toast(`Nothing unbilled in that range${j ? " for this job" : " for this client"}. Add lines by hand.`);
     }
     put(inv); go("invoice", inv.id);
   },
   pulllogs: d => { const i = getDoc(d.id); const n = addLogLines(i, "0000-01-01", "9999-12-31", i.jobId || null); put(i); render(); toast(n ? `Added ${n} day${n === 1 ? "" : "s"}.` : "No unbilled days for this client."); },
+  pullexps: d => { const i = getDoc(d.id); const n = addExpLines(i, rateJobsFor(i), "0000-01-01", "9999-12-31"); put(i); render(); toast(n ? `Added ${n} receipt${n === 1 ? "" : "s"}.` : "No receipts left to charge."); },
   invmode: d => { const i = getDoc(d.id); i.mode = d.m; put(i); render(); },
-  addline: d => { const i = getDoc(d.id); (i.lines = i.lines || []).push({id:uid("l"), date:i.mode === "days" ? today() : "", desc:"", qty:1, rate:d.u === "h" ? num(S().rate) : "", unit:d.u}); put(i); render(); },
+  addline: d => { const i = getDoc(d.id), j = getDoc(i.jobId); (i.lines = i.lines || []).push({id:uid("l"), date:i.mode === "days" ? today() : "", desc:"", qty:1, rate:d.u === "h" ? jobRate(j || {}) : d.u === "day" ? dayRateOf(j) : "", unit:d.u}); put(i); render(); },
   invstatus: d => { const i = getDoc(d.id); i.status = d.s; if (d.s !== "paid") { delete i.paidDate; delete i.paidAmount; } put(i); render(); },
-  invpaid: d => { const i = getDoc(d.id); i.status = "paid"; i.paidDate = today(); i.paidAmount = invTotal(i); put(i); const j = getDoc(i.jobId); if (j && j.status === "done" && quoteCalc(j).total > 0) { const left = quoteCalc(j).total - sum(all("invoice").filter(x => x.jobId === j.id && x.status === "paid"), x => x.paidAmount ?? invTotal(x)); if (left <= 1) { j.status = "paid"; put(j); } } render(); toast("Marked paid"); },
-  async delinv(d){ if (await confirmBox("Delete invoice?", "Days it billed will show as unbilled again.", "Delete", true)) { all("log").forEach(l => { let ch = false; (l.entries || []).forEach(e => { if (e.invId === d.id) { delete e.invId; ch = true; } }); if (ch) put(l); }); del(d.id); back(); } },
+  invpaid: d => { const i = getDoc(d.id); i.status = "paid"; i.paidDate = today(); i.paidAmount = invTotal(i); put(i); const j = getDoc(i.jobId); if (j && j.status === "done" && isRate(j)) { const r = rateRunning(j); if (!r.unEnts.length && !r.unExps.length && all("invoice").filter(x => x.jobId === j.id).every(x => x.status === "paid")) { j.status = "paid"; put(j); } }
+    else if (j && j.status === "done" && quoteCalc(j).total > 0) { const left = quoteCalc(j).total - sum(all("invoice").filter(x => x.jobId === j.id && x.status === "paid"), x => x.paidAmount ?? invTotal(x)); if (left <= 1) { j.status = "paid"; put(j); } } render(); toast("Marked paid"); },
+  async delinv(d){ if (await confirmBox("Delete invoice?", "Days and receipts it billed will show as unbilled again.", "Delete", true)) { all("log").forEach(l => { let ch = false; (l.entries || []).forEach(e => { if (e.invId === d.id) { delete e.invId; ch = true; } }); if (ch) put(l); }); all("expense").forEach(e => { if (e.invId === d.id) { delete e.invId; put(e); } }); del(d.id); back(); } },
   newevent: d => eventModal({id:null, date:d.date || today(), jobId:d.job || "", type:d.type || "work"}),
   editevent: d => eventModal(getDoc(d.id)),
   newexp: d => expModal({date:d.date || today(), jobId:d.job || "", category:"Materials"}),
@@ -2327,12 +2386,23 @@ function addLogLines(inv, d1, d2, jobId){
   const jobs = all("job").filter(j => jobId ? j.id === jobId : j.clientId === inv.clientId).map(j => j.id);
   let n = 0;
   all("log").filter(l => l.date >= d1 && l.date <= d2).sort((a, b) => a.date.localeCompare(b.date)).forEach(l => { let ch = false;
-    (l.entries || []).forEach(e => { if (!jobs.includes(e.jobId) || e.invId) return; const j = getDoc(e.jobId);
-      inv.lines.push({id:uid("l"), date:l.date, site:e.site || j?.site || "", desc:e.did || "", time:`${t12(e.start)} – ${t12(e.finish)}`, qty:entryHours(e), rate:jobRate(j || {}), unit:"h", jobId:e.jobId, entryId:e.id});
+    (l.entries || []).forEach(e => { if (!jobs.includes(e.jobId) || e.invId) return; const j = getDoc(e.jobId), day = isRate(j) && !byHour(j), h = entryHours(e);
+      inv.lines.push({id:uid("l"), date:l.date, site:e.site || j?.site || "", desc:e.did || "", time:`${t12(e.start)} – ${t12(e.finish)}`, qty:day ? dayQty(h) : h, rate:day ? dayRateOf(j) : jobRate(j || {}), unit:day ? "day" : "h", jobId:e.jobId, entryId:e.id});
       e.invId = inv.id; ch = true; n++; });
     if (ch) put(l); });
   return n;
 }
+/* receipts for day rate jobs that haven't been charged yet: materials, hire and subbies, with the job's markup */
+function addExpLines(inv, jobIds, d1, d2){
+  let n = 0;
+  all("expense").filter(e => jobIds.includes(e.jobId) && isRate(getDoc(e.jobId)) && !e.invId && billable(e) && (!e.date || e.date >= d1 && e.date <= d2)).sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach(e => {
+    const j = getDoc(e.jobId);
+    inv.lines.push({id:uid("l"), date:e.date || "", site:"", desc:`${e.category === "Materials" || !e.category ? "Materials" : e.category}${e.supplier ? " from " + e.supplier : ""}${e.desc ? ": " + e.desc : ""}`, qty:1, rate:round2(num(e.amount) * (1 + markupOf(j) / 100)), unit:"mat", jobId:e.jobId, expId:e.id});
+    e.invId = inv.id; put(e); n++;
+  });
+  return n;
+}
+const rateJobsFor = inv => all("job").filter(j => isRate(j) && (inv.jobId ? j.id === inv.jobId : j.clientId === inv.clientId)).map(j => j.id);
 CHANGE.evtype = () => {};
 async function eventModal(ev){
   const jobs = all("job").filter(j => !["paid","lost"].includes(j.status));
