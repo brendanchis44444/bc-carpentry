@@ -226,6 +226,10 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
 .evrow .bar{width:4px;align-self:stretch;border-radius:4px;flex:none}
 
 /* log */
+.layrow{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;background:var(--surface)}
+.layrow>input[type=checkbox]{width:20px;height:20px;flex:none;accent-color:var(--brand)}
+.layrow textarea{min-height:0;padding:6px 8px}
+.laychecks{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px 14px;margin-top:10px}
 .entry{border:1px solid var(--line);border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
 .times{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 @media (max-width:480px){.times{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -447,11 +451,11 @@ const defaultSettings = () => ({
   id:"settings", kind:"settings",
   name:"", trading:"", abn:"", phone:"", email:"", area:"", home:"", logoImg:"",
   bankName:"", bsb:"", acct:"",
-  rate:70, markup:0, contingency:0, validDays:30, payDays:7, deposit:0, breakMin:45, showMat:"items", showHours:true, pricelist:[],
+  rate:70, markup:10, contingency:0, validDays:30, payDays:7, deposit:0, breakMin:45, showMat:"items", showHours:true, pricelist:[],
   superPct:12, otherIncome:0, withheld:0, sbOffset:true, kmRate:0.88,
   renewals:[{id:"rn1", name:"NSW contractor licence", date:""},{id:"rn2", name:"Public liability insurance", date:""},{id:"rn3", name:"Vehicle rego", date:""},{id:"rn4", name:"Tool insurance", date:""}],
   nextQuote:1, nextInv:1,
-  quoteTerms:"Prices are an estimate based on the scope above. Items marked TBC will be priced at cost once confirmed.\nAny changes to the scope or hidden issues found once work starts will be discussed and quoted before going ahead.\nMaterials are supplied at cost unless noted. Payment due within 7 days of invoice.",
+  quoteTerms:"Prices are an estimate based on the scope above. Items marked TBC will be priced at cost once confirmed.\nAny changes to the scope or hidden issues found once work starts will be discussed and quoted before going ahead.\nMaterials include a 10% handling charge unless noted. Payment due within 7 days of invoice.",
   invTerms:"Payment due within 7 days. Please use the invoice number as your payment reference.",
   pricebook: DEFAULT_PRICEBOOK
 });
@@ -848,9 +852,16 @@ function title(){
   return ({home:bizName(), jobs:"Jobs", calendar:"Calendar", log:"Day log", money:"Money", settings:"Settings", clients:"Clients", client:"Client", timeline:"Google Timeline", catchup:"Catch up", photosort:"Sort photos", receipts:"Receipts"}[UI.view]) || bizName();
 }
 let renderQueued = false, RENDERING = false;
+/* Oct 2026: materials carry a 10% handling charge as standard (unpaid day rate jobs that were at cost too) */
+function upgradeOnce(){
+  if (Store.mode === "loading") return; const s = S(); if (s.std2610) return;
+  s.std2610 = 1; if (!num(s.markup)) s.markup = 10;
+  all("job").filter(j => isRate(j) && j.status !== "paid" && !num(j.markup)).forEach(j => { j.markup = 10; put(touch(j)); });
+  put(s);
+}
 function render(){
   if (Store.mode === "loading" && !Object.keys(Store.docs).length) { $("#main").innerHTML = `<div class="empty">Loading your jobs…</div>`; drawChrome(); return; }
-  S();
+  S(); upgradeOnce();
   // keep focus + caret through re-render
   const a = document.activeElement; let keep = null;
   if (a && a.dataset && (a.dataset.k || a.id) && $("#main").contains(a)) keep = { k:a.dataset.k, id:a.id, s:a.selectionStart, e:a.selectionEnd };
@@ -973,6 +984,9 @@ VIEWS.jobs = () => {
   </div>`;
 };
 const CHANGE = {
+  layflag(el){ const i = getDoc(el.dataset.id); if (!i) return; laySave(i).show[el.dataset.f] = el.checked ? 1 : 0; layRemember(i); queueRender(); },
+  laysel(el){ (UI.laySel = UI.laySel || {})[el.dataset.key] = el.checked; queueRender(); },
+  laylabel(el){ const i = getDoc(el.dataset.id); if (!i) return; const r = laySave(i).rows.find(r => r.k === el.dataset.key); if (r) r.label = el.value.trim(); layRemember(i); queueRender(); },
   jobsearch(el){ UI.jobSearch = el.value; render(); },
   logdate(el){ if (el.value) { UI.logDate = el.value; render(); } },
   fy(el){ UI.fy = +el.value; render(); },
@@ -1201,30 +1215,123 @@ function quotePaper(j){
     ${imgs.length ? `<div class="pagebreak brk" style="padding-top:20px"><div class="lbl">Plans &amp; photos</div><div class="pics">${imgs.map(im => `<figure class="brk"><img data-img="${im.id}" alt=""><figcaption>${esc(im.cap || "")}</figcaption></figure>`).join("")}</div></div>` : ""}
   </div>`;
 }
+/* Invoice layout: what the client sees. It changes only the printed invoice. The lines underneath (hours,
+   receipts, amounts) and so the totals, job costs and tax figures stay exactly as they are.
+   i.lay = {show:{flag:1|0}, rows:[{k, ids:[line ids], label, kind:"lab"|"mat"|""}]} */
+const LAY_FLAGS = [["ref", "What the job was (the \"For\" box)"], ["jobNo", "Job number"], ["contact", "Client's phone, email and address"], ["dates", "Dates on each line"], ["site", "Site address on each line"], ["time", "Start and finish times"], ["qty", "Number of days or hours"], ["rate", "Your rate, or price each"], ["breakdown", "Labour and materials subtotals"], ["gst", "\"Not registered for GST\" note"], ["rcpt", "\"Receipts available on request\" note"], ["bank", "Bank details"], ["terms", "Payment terms note"], ["footer", "Your contact details at the bottom"]];
+const LAY_BASE = {ref:1, jobNo:0, contact:1, gst:1, rcpt:1, bank:1, terms:1, footer:1};
+const LAY_PRESETS = {
+  summary:{name:"Summary", merge:true, show:{...LAY_BASE, rcpt:0, dates:0, site:0, time:0, qty:0, rate:0, breakdown:0}},
+  items:{name:"Itemised", show:{...LAY_BASE, dates:1, site:0, time:0, qty:1, rate:1, breakdown:1}},
+  full:{name:"Full detail", show:{...LAY_BASE, dates:1, site:1, time:1, qty:1, rate:0, breakdown:1}}
+};
+const lineKind = l => l.unit === "h" || l.unit === "day" ? "lab" : l.unit === "mat" ? "mat" : "";
+const lineAmt = l => num(l.qty) * num(l.rate);
+// an invoice without its own layout yet shows the standard one (a summary, unless changed for the job or in settings)
+const layOf = i => i.lay || layStart(getDoc(i.jobId), true);
+const layShow = i => ({...LAY_BASE, ...layOf(i).show});
+function layRows(i, keepEmpty){
+  const lines = i.lines || [], byId = {}, used = new Set();
+  lines.forEach(l => { if (!l.id) l.id = uid("l"); byId[l.id] = l; });
+  const rows = (layOf(i).rows || []).map(r => {
+    const ids = (r.ids || []).filter(id => byId[id] && !used.has(id)); ids.forEach(id => used.add(id));
+    return {k:r.k, label:r.label || "", kind:r.kind || "", ids};
+  });
+  // lines added after the layout was set up join a merged "Labour" or "Materials" line if there is one
+  lines.forEach(l => {
+    if (used.has(l.id)) return; used.add(l.id);
+    const g = lineKind(l) && rows.find(r => r.kind === lineKind(l));
+    if (g) g.ids.push(l.id); else rows.push({k:"l" + l.id, label:"", kind:"", ids:[l.id]});
+  });
+  return rows.filter(r => keepEmpty || r.ids.length).map(r => ({...r, lines:r.ids.map(id => byId[id])}));
+}
+function layView(r){
+  const ls = r.lines, one = ls.length === 1 ? ls[0] : null, kinds = [...new Set(ls.map(lineKind))];
+  const auto = one ? one.desc || {lab:"Labour", mat:"Materials"}[lineKind(one)] || "" : kinds.length === 1 && kinds[0] === "lab" ? "Labour" : kinds.length === 1 && kinds[0] === "mat" ? "Materials" : "Labour and materials";
+  const dates = ls.map(l => l.date).filter(Boolean).sort(), sites = [...new Set(ls.map(l => (l.site || "").trim()).filter(Boolean))];
+  const units = [...new Set(ls.map(l => l.unit || ""))], unit = units.length === 1 ? units[0] : null;
+  const qty = unit === "h" || unit === "day" ? sum(ls, l => num(l.qty)) : one ? num(one.qty) : 0;
+  const rates = [...new Set(ls.map(l => num(l.rate)))], rate = rates.length === 1 && unit != null ? rates[0] : null;
+  return {label:r.label.trim() || auto, auto, n:ls.length, amt:round2(sum(ls, lineAmt)), dates, sites, time:one ? one.time || "" : "", unit, qty, rate, mat:kinds.length === 1 && kinds[0] === "mat"};
+}
 function invPaper(i){
-  const s = S(), c = getDoc(i.clientId) || {name:i.billTo || ""};
-  const days = i.mode === "days"; const tot = invTotal(i); const hrs = sum(i.lines || [], l => l.unit === "h" ? l.qty : 0), dys = sum(i.lines || [], l => l.unit === "day" ? num(l.qty) : 0);
-  const matT = round2(sum((i.lines || []).filter(l => l.unit === "mat"), l => num(l.qty) * num(l.rate)));
-  const qtyTxt = l => l.unit === "h" ? fmtH(l.qty) : l.unit === "day" ? daysTxt(num(l.qty)) : num(l.qty) !== 1 ? num(l.qty) : "";
-  const rows = (i.lines || []).map((l, x, a) => days
-    ? `${l.unit === "mat" && (!x || a[x - 1].unit !== "mat") ? `<tr class="sec brk"><td colspan="5">Materials</td></tr>` : ""}<tr class="brk"><td style="white-space:nowrap"><b>${l.date ? dAU(l.date) : ""}</b><br>${l.date ? DOW[parseD(l.date).getDay()] : ""}</td><td>${esc(l.site || "")}</td><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${l.unit === "mat" ? "" : `${esc(l.time || "")}${l.time ? "<br>" : ""}${qtyTxt(l)}`}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`
-    : `<tr class="brk"><td style="white-space:pre-wrap">${esc(l.desc)}</td><td class="n">${l.unit === "h" || l.unit === "day" ? qtyTxt(l) + " @ " + money2(l.rate) : num(l.qty) !== 1 ? num(l.qty) + " × " + money2(l.rate) : ""}</td><td class="n">${money2(num(l.qty) * num(l.rate))}</td></tr>`).join("");
+  const s = S(), c = getDoc(i.clientId) || {name:i.billTo || ""}, j = getDoc(i.jobId), sh = layShow(i);
+  const tot = invTotal(i), lines = i.lines || [];
+  const hrs = sum(lines, l => l.unit === "h" ? num(l.qty) : 0), dys = sum(lines, l => l.unit === "day" ? num(l.qty) : 0);
+  const matT = round2(sum(lines.filter(l => l.unit === "mat"), lineAmt));
+  const rows = layRows(i).map(layView);
+  const dateTxt = v => !v.dates.length ? "" : v.dates[0] === v.dates[v.dates.length - 1] ? `<b>${dAU(v.dates[0])}</b><br>${DOW[parseD(v.dates[0]).getDay()]}` : `<b>${dAU(v.dates[0])}</b> to<br><b>${dAU(v.dates[v.dates.length - 1])}</b>`;
+  const qtyCell = v => {
+    const lab = v.unit === "h" || v.unit === "day";
+    const q = !sh.qty ? "" : v.unit === "h" ? fmtH(v.qty) : v.unit === "day" ? daysTxt(v.qty) : v.qty && v.qty !== 1 ? String(round2(v.qty)) : "";
+    const r = !sh.rate || v.rate == null || !(lab || (v.qty && v.qty !== 1)) ? "" : (lab ? "@ " : q ? "× " : "@ ") + money2(v.rate);
+    return [sh.time && v.time ? esc(v.time) : "", [q, r].filter(Boolean).join(" ")].filter(Boolean).join("<br>");
+  };
+  const hasDate = sh.dates && rows.some(v => v.dates.length), hasSite = sh.site && rows.some(v => v.sites.length), hasQty = rows.some(v => qtyCell(v));
+  const cols = 2 + hasDate + hasSite + hasQty;
+  const body = rows.map((v, x) => {
+    // a run of receipts listed one by one after the labour gets its own heading
+    const head = v.mat && v.n === 1 && x && !rows[x - 1].mat ? `<tr class="sec brk"><td colspan="${cols}">Materials</td></tr>` : "";
+    return `${head}<tr class="brk">${hasDate ? `<td style="white-space:nowrap">${dateTxt(v)}</td>` : ""}${hasSite ? `<td>${esc(v.sites.join("\n")).replace(/\n/g, "<br>")}</td>` : ""}<td style="white-space:pre-wrap">${esc(v.label)}</td>${hasQty ? `<td class="n">${qtyCell(v)}</td>` : ""}<td class="n">${money2(v.amt)}</td></tr>`;
+  }).join("");
   return `<div class="paper">
-    <div class="ph">${logoHtml()}<div class="ttl"><h1>INVOICE</h1><div class="meta"><span>Invoice no.</span><b>${esc(i.number)}</b><span>Date</span><b>${dAU(i.date)}</b>${i.due ? `<span>Due</span><b>${dAU(i.due)}</b>` : ""}</div></div></div>
+    <div class="ph">${logoHtml()}<div class="ttl"><h1>INVOICE</h1><div class="meta"><span>Invoice no.</span><b>${esc(i.number)}</b><span>Date</span><b>${dAU(i.date)}</b>${i.due ? `<span>Due</span><b>${dAU(i.due)}</b>` : ""}${sh.jobNo && jobNo(j) ? `<span>Job no.</span><b>${esc(jobNo(j))}</b>` : ""}</div></div></div>
     <div class="rule"></div>
-    <div class="parties"><div><div class="lbl">Bill to</div><div class="who">${esc(c.name)}</div>${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}${esc(c.address || "")}</div>
+    <div class="parties"><div><div class="lbl">Bill to</div><div class="who">${esc(c.name)}</div>${sh.contact ? `${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}${esc(c.address || "")}` : ""}</div>
       <div><div class="lbl">From</div><div class="who">${esc(s.name)}</div>${esc(s.trading)}<br>ABN ${esc(s.abn)}</div></div>
-    ${i.ref ? `<div class="scope brk"><div class="lbl">For</div><h2>${esc(i.ref)}</h2></div>` : ""}
-    <table><thead><tr>${days ? `<th style="width:92px">Date</th><th style="width:150px">Site</th><th>Description</th><th class="n" style="width:110px">Time</th>` : `<th>Description</th><th class="n" style="width:150px"></th>`}<th class="n" style="width:96px">Amount</th></tr></thead><tbody>${rows}</tbody></table>
+    ${sh.ref && i.ref ? `<div class="scope brk"><div class="lbl">For</div><h2>${esc(i.ref)}</h2></div>` : ""}
+    <table><thead><tr>${hasDate ? `<th style="width:96px">Date</th>` : ""}${hasSite ? `<th style="width:150px">Site</th>` : ""}<th>Description</th>${hasQty ? `<th class="n" style="width:120px">${sh.time && rows.some(v => v.time) ? "Time" : ""}</th>` : ""}<th class="n" style="width:96px">Amount</th></tr></thead><tbody>${body}</tbody></table>
     <div class="totals brk">
-      ${hrs ? `<div><span>Total hours</span><span>${fmtH(hrs)}</span></div>` : ""}${dys ? `<div><span>Days worked</span><span>${daysTxt(dys)}</span></div>` : ""}
-      ${matT && matT !== tot ? `<div><span>Labour</span><span>${money2(tot - matT)}</span></div><div><span>Materials</span><span>${money2(matT)}</span></div>` : ""}
+      ${sh.breakdown && sh.qty && hrs ? `<div><span>Total hours</span><span>${fmtH(hrs)}</span></div>` : ""}${sh.breakdown && sh.qty && dys ? `<div><span>Days worked</span><span>${daysTxt(dys)}</span></div>` : ""}
+      ${sh.breakdown && matT && matT !== tot ? `<div><span>Labour</span><span>${money2(tot - matT)}</span></div><div><span>Materials</span><span>${money2(matT)}</span></div>` : ""}
       <div class="grand"><span>Total due</span><span>${money2(tot)}</span></div>
-      <div class="gst">Not registered for GST. No GST has been charged.${matT ? " Receipts for materials available on request." : ""}</div>
+      ${(sh.gst || (sh.rcpt && matT)) ? `<div class="gst">${sh.gst ? "Not registered for GST. No GST has been charged." : ""}${sh.rcpt && matT ? " Receipts for materials available on request." : ""}</div>` : ""}
     </div>
-    <div class="pay brk"><div class="lbl">Payment information</div><span>Account name</span><b>${esc(s.bankName || s.name)}</b><span>BSB</span><b>${esc(s.bsb || "—")}</b><span>Account no.</span><b>${esc(s.acct || "—")}</b><span>Reference</span><b>${esc(i.number)}</b></div>
-    ${(i.note || s.invTerms) ? `<div class="terms brk">${esc(i.note || s.invTerms)}</div>` : ""}
-    <div class="brk">${bizFoot()}</div>
+    ${sh.bank ? `<div class="pay brk"><div class="lbl">Payment information</div><span>Account name</span><b>${esc(s.bankName || s.name)}</b><span>BSB</span><b>${esc(s.bsb || "—")}</b><span>Account no.</span><b>${esc(s.acct || "—")}</b><span>Reference</span><b>${esc(i.number)}</b></div>` : ""}
+    ${sh.terms && (i.note || s.invTerms) ? `<div class="terms brk">${esc(i.note || s.invTerms)}</div>` : ""}
+    ${sh.footer ? `<div class="brk">${bizFoot()}</div>` : ""}
+  </div>`;
+}
+/* the layout editor on the invoice screen */
+function laySave(i){ // store the layout as it stands, then remember the choices for this job's next invoice
+  i.lay = {show:{...layShow(i)}, rows:layRows(i, true).map(r => ({k:r.k, ids:r.ids, label:r.label, kind:r.kind}))};
+  return i.lay;
+}
+function layRemember(i){
+  put(i); const j = getDoc(i.jobId); if (!j) return;
+  j.invLay = {show:{...i.lay.show}, lab:i.lay.rows.some(r => r.kind === "lab"), mat:i.lay.rows.some(r => r.kind === "mat")}; put(touch(j));
+}
+function layStart(j, fixedKeys){ // a new invoice starts with this job's last choices, then your default, then a summary
+  const p = (j && j.invLay) || S().invLay || {show:LAY_PRESETS.summary.show, lab:true, mat:true};
+  return {show:{...LAY_BASE, ...p.show}, rows:[p.lab && {k:fixedKeys ? "glab" : uid("r"), ids:[], label:"", kind:"lab"}, p.mat && {k:fixedKeys ? "gmat" : uid("r"), ids:[], label:"", kind:"mat"}].filter(Boolean)};
+}
+function layMergeKind(i, kind){ // every line of one kind (labour or materials) as one line, which also collects ones added later
+  const L = i.lay, rows = layRows(i, true), hit = rows.filter(r => r.lines.length ? r.lines.every(l => lineKind(l) === kind) : r.kind === kind);
+  if (!hit.length) { L.rows.push({k:uid("r"), ids:[], label:"", kind}); return; }
+  const keep = L.rows.find(r => r.k === (hit.find(r => r.kind === kind) || hit[0]).k);
+  if (keep.kind !== kind && hit.length > 1) keep.label = "";
+  Object.assign(keep, {ids:hit.flatMap(r => r.ids), kind});
+  L.rows = L.rows.filter(r => r === keep || !hit.some(h => h.k === r.k));
+  L.rows.forEach(r => { if (r !== keep && r.kind === kind) r.kind = ""; });
+}
+function layEditor(i){
+  const sh = layShow(i), rows = layRows(i), sel = UI.laySel || {};
+  const hasLab = rows.filter(r => r.lines.every(l => lineKind(l) === "lab")).length > 1, hasMat = rows.filter(r => r.lines.every(l => lineKind(l) === "mat")).length > 1;
+  const match = Object.entries(LAY_PRESETS).find(([, p]) => LAY_FLAGS.every(([f]) => !!sh[f] === !!p.show[f]) && (!p.merge || (!hasLab && !hasMat)));
+  const nSel = rows.filter(r => sel[r.k]).length;
+  return `<div class="card"><h2>What the client sees</h2>
+    <p class="small muted" style="margin:2px 0 10px">These choices only change the invoice you send. Your hours, receipts, totals and tax figures stay as they are. The next invoice for this job starts the same way.</p>
+    <div class="seg">${Object.entries(LAY_PRESETS).map(([k, p]) => `<button class="${match && match[0] === k ? "on" : ""}" data-act="laypreset" data-id="${i.id}" data-p="${k}">${p.name}</button>`).join("")}</div>
+    <div style="margin-top:10px"><button class="btn ghost sm" data-act="layopen" aria-expanded="${UI.layOpen ? "true" : "false"}">${UI.layOpen ? "Hide" : "Show"} the detail switches</button></div>
+    ${UI.layOpen ? `<div class="laychecks">${LAY_FLAGS.map(([f, n]) => `<label class="check small"><input type="checkbox" data-ch="layflag" data-id="${i.id}" data-f="${f}" ${sh[f] ? "checked" : ""}> ${esc(n)}</label>`).join("")}</div>` : ""}
+    <div class="subhead" style="margin-top:14px">Lines on the invoice</div>
+    <p class="tiny muted" style="margin:2px 0 8px">Tick lines and press Merge to show them as one line. Type over a name to change the wording the client sees.</p>
+    <div class="stack" style="gap:6px">${rows.map((r, x) => { const v = layView(r); return `<div class="layrow"><input type="checkbox" aria-label="Select line" data-ch="laysel" data-key="${r.k}" ${sel[r.k] ? "checked" : ""}>
+      <div class="grow" style="min-width:0"><textarea class="auto" rows="1" data-ch="laylabel" data-id="${i.id}" data-key="${r.k}" placeholder="${esc(v.auto)}">${esc(r.label)}</textarea><div class="tiny muted">${[r.lines.length > 1 ? r.lines.length + " lines merged" : "", v.dates.length ? dAU(v.dates[0]) + (v.dates[v.dates.length - 1] !== v.dates[0] ? " to " + dAU(v.dates[v.dates.length - 1]) : "") : "", v.unit === "day" ? daysTxt(v.qty) : v.unit === "h" ? fmtH(v.qty) : ""].filter(Boolean).join(" · ")}</div></div>
+      <b class="num">${money2(v.amt)}</b>
+      <div class="row" style="gap:2px;flex-wrap:nowrap"><button class="btn ghost sm" data-act="laymove" data-id="${i.id}" data-key="${r.k}" data-d="-1" ${x ? "" : "disabled"} aria-label="Move up">↑</button><button class="btn ghost sm" data-act="laymove" data-id="${i.id}" data-key="${r.k}" data-d="1" ${x < rows.length - 1 ? "" : "disabled"} aria-label="Move down">↓</button>${r.lines.length > 1 ? `<button class="btn ghost sm" data-act="laysplit" data-id="${i.id}" data-key="${r.k}">Split</button>` : ""}</div></div>`; }).join("") || `<div class="muted small">No lines yet.</div>`}</div>
+    <div class="row" style="margin-top:10px"><button class="btn${nSel > 1 ? " primary" : ""}" data-act="laymerge" data-id="${i.id}" ${nSel > 1 ? "" : "disabled"}>Merge ${nSel > 1 ? nSel + " ticked lines" : "ticked lines"}</button>${hasLab ? `<button class="btn" data-act="laykind" data-id="${i.id}" data-kind="lab">All labour as one line</button>` : ""}${hasMat ? `<button class="btn" data-act="laykind" data-id="${i.id}" data-kind="mat">All materials as one line</button>` : ""}${rows.some(r => r.lines.length > 1) ? `<button class="btn ghost" data-act="laysplitall" data-id="${i.id}">Split everything</button>` : ""}</div>
+    <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="laydefault" data-id="${i.id}">Use these choices for all new invoices</button></div>
   </div>`;
 }
 
@@ -2183,12 +2290,13 @@ VIEWS.invoice = () => {
       ${i.status === "paid" ? `<label class="field"><span>Paid on</span><input type="date" ${K("paidDate")} value="${esc(i.paidDate)}"></label><label class="field"><span>Amount received</span><input type="number" step="any" ${K("paidAmount")} value="${i.paidAmount ?? invTotal(i)}"></label>` : ""}
     </div>
     <label class="field" style="margin-top:10px"><span>For (shows under the header, optional)</span><input type="text" ${K("ref")} value="${esc(i.ref)}" placeholder="e.g. Deck at 12 Smith St, Merewether"></label>
-    <div class="row" style="margin-top:10px"><span class="small muted">Layout</span><div class="seg"><button class="${days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="days">Day by day (labour hire)</button><button class="${!days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="items">Line items</button></div></div></div>
+    <div class="row" style="margin-top:10px"><span class="small muted">Enter lines</span><div class="seg"><button class="${days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="days">Day by day (labour hire)</button><button class="${!days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="items">Line items</button></div></div></div>
     ${lines}
-    <div class="row">${(() => { const j = getDoc(i.jobId); return isRate(j) && !byHour(j) ? `<button class="btn" data-act="addline" data-id="${i.id}" data-u="day">${ic("plus")} Day line</button>` : `<button class="btn" data-act="addline" data-id="${i.id}" data-u="h">${ic("plus")} Hours line</button>`; })()}<button class="btn" data-act="addline" data-id="${i.id}" data-u="">${ic("plus")} Item line</button><button class="btn" data-act="pulllogs" data-id="${i.id}">${ic("log")} Add days from logs</button>${rateJobsFor(i).length ? `<button class="btn" data-act="pullexps" data-id="${i.id}">${ic("plus")} Add receipts</button>` : ""}</div>
+    <div class="row">${(() => { const j = getDoc(i.jobId); return isRate(j) && !byHour(j) ? `<button class="btn" data-act="addline" data-id="${i.id}" data-u="day">${ic("plus")} Day line</button>` : `<button class="btn" data-act="addline" data-id="${i.id}" data-u="h">${ic("plus")} Hours line</button>`; })()}<button class="btn" data-act="addline" data-id="${i.id}" data-u="">${ic("plus")} Item line</button><button class="btn" data-act="pulllogs" data-id="${i.id}">${ic("log")} Add days from logs</button>${rateJobsFor(i).length ? `<button class="btn" data-act="pullexps" data-id="${i.id}">${ic("plus")} Add receipts</button>` : ""}${i.status !== "paid" && matReprice(i).length ? `<button class="btn" data-act="matreprice" data-id="${i.id}">Charge materials at ${markupOf(getDoc(i.jobId))}% on top</button>` : ""}</div>
     <label class="field"><span>Note on invoice</span><textarea ${K("note")} placeholder="${esc(S().invTerms)}">${esc(i.note)}</textarea></label>
     <div class="row"><button class="btn primary" data-act="invpdf" data-id="${i.id}">${ic("pdf")} Save invoice PDF</button><button class="btn" data-act="invmsg" data-id="${i.id}">${ic("copy")} Copy message</button>${i.status === "sent" ? `<button class="btn" data-act="invremind" data-id="${i.id}">${ic("copy")} Copy payment reminder</button>` : ""}<button class="btn danger" data-act="delinv" data-id="${i.id}">Delete</button></div>
-    ${!S().bsb ? `<div class="note">Your bank details are blank, so the invoice shows dashes. Add your BSB and account number in <a href="#" data-act="nav" data-v="settings">Settings</a>.</div>` : ""}
+    ${layEditor(i)}
+    ${!S().bsb && layShow(i).bank ? `<div class="note">Your bank details are blank, so the invoice shows dashes. Add your BSB and account number in <a href="#" data-act="nav" data-v="settings">Settings</a>.</div>` : ""}
     <div class="paperwrap"><div class="paperscale">${invPaper(i)}</div></div>
   </div>`;
 };
@@ -2401,7 +2509,7 @@ const ACT = {
     if (doc.kind === "invoice" && gone && gone.entryId) all("log").forEach(l => (l.entries || []).forEach(e => { if (e.id === gone.entryId && e.invId === doc.id) { delete e.invId; put(l); } }));
     if (doc.kind === "invoice" && gone && gone.expId) { const e = getDoc(gone.expId); if (e && e.invId === doc.id) { delete e.invId; put(e); } }
     render(); },
-  pricing: d => { const j = getDoc(d.id); j.pricing = d.v; if (d.v === "rate") { if (j.dayRate == null) j.dayRate = dayRateOf(j); if (j.markup == null) j.markup = 0; } put(touch(j)); render(); },
+  pricing: d => { const j = getDoc(d.id); j.pricing = d.v; if (d.v === "rate") { if (j.dayRate == null) j.dayRate = dayRateOf(j); if (j.markup == null) j.markup = num(S().markup); } put(touch(j)); render(); },
   addsec: d => { const j = getDoc(d.id); (j.sections = j.sections || []).push({id:uid("s"), name:"", tasks:[{id:uid("t"), text:"", hours:""}], mats:[]}); put(touch(j)); render(); const ins = document.querySelectorAll(".section input.title"); ins[ins.length - 1]?.focus(); },
   async rmsec(d){ const j = getDoc(d.id); const sec = j.sections[+d.i]; if ((sec.tasks || []).some(t => t.text) || (sec.mats || []).length) { if (!await confirmBox("Delete section?", `"${sec.name || "This section"}" and its tasks and materials will be removed.`, "Delete", true)) return; } j.sections.splice(+d.i, 1); put(touch(j)); render(); },
   mvsec: d => { const j = getDoc(d.id); const i = +d.i, k = i + (+d.d); if (k < 0 || k >= j.sections.length) return; [j.sections[i], j.sections[k]] = [j.sections[k], j.sections[i]]; put(j); render(); },
@@ -2494,10 +2602,32 @@ const ACT = {
       inv.mode = "days"; addLogLines(inv, ok.d1, ok.d2, j ? j.id : null); addExpLines(inv, rateJobsFor(inv), ok.d1, ok.d2);
       if (!inv.lines.length) toast(`Nothing unbilled in that range${j ? " for this job" : " for this client"}. Add lines by hand.`);
     }
-    put(inv); go("invoice", inv.id);
+    inv.lay = layStart(j); put(inv); go("invoice", inv.id);
   },
   pulllogs: d => { const i = getDoc(d.id); const n = addLogLines(i, "0000-01-01", "9999-12-31", i.jobId || null); put(i); render(); toast(n ? `Added ${n} day${n === 1 ? "" : "s"}.` : "No unbilled days for this client."); },
   pullexps: d => { const i = getDoc(d.id); const n = addExpLines(i, rateJobsFor(i), "0000-01-01", "9999-12-31"); put(i); render(); toast(n ? `Added ${n} receipt${n === 1 ? "" : "s"}.` : "No receipts left to charge."); },
+  laypreset: d => {
+    const i = getDoc(d.id), p = LAY_PRESETS[d.p], L = laySave(i); L.show = {...p.show};
+    if (p.merge) { layMergeKind(i, "lab"); layMergeKind(i, "mat"); }
+    else L.rows = layRows(i).flatMap(r => r.lines.length > 1 ? r.ids.map(id => ({k:"l" + id, ids:[id], label:"", kind:""})) : [{k:r.k, ids:r.ids, label:r.label, kind:""}]);
+    UI.laySel = {}; layRemember(i); render();
+  },
+  layopen: () => { UI.layOpen = !UI.layOpen; render(); },
+  laymerge: d => {
+    const i = getDoc(d.id), L = laySave(i), sel = UI.laySel || {}, pick = L.rows.filter(r => sel[r.k] && r.ids.length); if (pick.length < 2) return toast("Tick two or more lines to merge.");
+    const lines = pick.flatMap(r => r.ids).map(id => (i.lines || []).find(l => l.id === id)), kinds = [...new Set(lines.map(lineKind))];
+    const row = {k:uid("r"), ids:pick.flatMap(r => r.ids), label:"", kind:kinds.length === 1 ? kinds[0] : ""};
+    L.rows.splice(L.rows.indexOf(pick[0]), 0, row); L.rows = L.rows.filter(r => !pick.includes(r));
+    // only one merged line per kind collects lines added later
+    if (row.kind) L.rows.forEach(r => { if (r !== row && r.kind === row.kind) r.kind = ""; });
+    UI.laySel = {}; layRemember(i); render();
+  },
+  laykind: d => { const i = getDoc(d.id); laySave(i); layMergeKind(i, d.kind); layRemember(i); render(); },
+  laysplit: d => { const i = getDoc(d.id), L = laySave(i), x = L.rows.findIndex(r => r.k === d.key); if (x < 0) return; L.rows.splice(x, 1, ...L.rows[x].ids.map(id => ({k:"l" + id, ids:[id], label:"", kind:""}))); layRemember(i); render(); },
+  laysplitall: d => { const i = getDoc(d.id), L = laySave(i); L.rows = L.rows.flatMap(r => r.ids.length > 1 || r.kind ? r.ids.map(id => ({k:"l" + id, ids:[id], label:"", kind:""})) : [r]); layRemember(i); render(); },
+  laymove: d => { const i = getDoc(d.id), L = laySave(i), vis = L.rows.filter(r => r.ids.length), x = vis.findIndex(r => r.k === d.key), y = x + num(d.d); if (x < 0 || y < 0 || y >= vis.length) return; const a = L.rows.indexOf(vis[x]), b = L.rows.indexOf(vis[y]); [L.rows[a], L.rows[b]] = [L.rows[b], L.rows[a]]; layRemember(i); render(); },
+  laydefault: d => { const i = getDoc(d.id), L = laySave(i), s = S(); s.invLay = {show:{...L.show}, lab:L.rows.some(r => r.kind === "lab"), mat:L.rows.some(r => r.kind === "mat")}; put(s); layRemember(i); toast("New invoices will start this way."); },
+  matreprice: d => { const i = getDoc(d.id), ch = matReprice(i); ch.forEach(x => { x.l.rate = x.rate; }); put(touch(i)); render(); toast(`Updated ${ch.length} material line${ch.length === 1 ? "" : "s"}. New total ${money2(invTotal(i))}.`); },
   invmode: d => { const i = getDoc(d.id); i.mode = d.m; put(i); render(); },
   addline: d => { const i = getDoc(d.id), j = getDoc(i.jobId); (i.lines = i.lines || []).push({id:uid("l"), date:i.mode === "days" ? today() : "", desc:"", qty:1, rate:d.u === "h" ? jobRate(j || {}) : d.u === "day" ? dayRateOf(j) : "", unit:d.u}); put(i); render(); },
   invstatus: d => { const i = getDoc(d.id); i.status = d.s; if (d.s !== "paid") { delete i.paidDate; delete i.paidAmount; } put(i); render(); },
@@ -2596,6 +2726,8 @@ function addLogLines(inv, d1, d2, jobId){
     if (ch) put(l); });
   return n;
 }
+// receipt lines on an invoice whose price no longer matches the receipt plus the job's markup
+const matReprice = i => (i.lines || []).filter(l => l.expId && getDoc(l.expId)).map(l => ({l, rate:round2(num(getDoc(l.expId).amount) * (1 + markupOf(getDoc(getDoc(l.expId).jobId)) / 100))})).filter(x => Math.abs(x.rate - num(x.l.rate)) > 0.004);
 /* receipts for day rate jobs that haven't been charged yet: materials, hire and subbies, with the job's markup */
 function addExpLines(inv, jobIds, d1, d2){
   let n = 0;
