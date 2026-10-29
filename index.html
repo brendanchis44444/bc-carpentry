@@ -1246,7 +1246,7 @@ function layRows(i, keepEmpty){
   return rows.filter(r => keepEmpty || r.ids.length).map(r => ({...r, lines:r.ids.map(id => byId[id])}));
 }
 function layView(r){
-  const ls = r.lines, one = ls.length === 1 ? ls[0] : null, kinds = [...new Set(ls.map(lineKind))];
+  const ls = r.lines, one = ls.length === 1 ? ls[0] : null, ks = [...new Set(ls.map(lineKind))], kinds = ks.length > 1 ? ks.filter(Boolean) : ks; // an extra item (a discount, rounding) takes the name of what it's merged with
   const auto = one ? one.desc || {lab:"Labour", mat:"Materials"}[lineKind(one)] || "" : kinds.length === 1 && kinds[0] === "lab" ? "Labour" : kinds.length === 1 && kinds[0] === "mat" ? "Materials" : "Labour and materials";
   const dates = ls.map(l => l.date).filter(Boolean).sort(), sites = [...new Set(ls.map(l => (l.site || "").trim()).filter(Boolean))];
   const units = [...new Set(ls.map(l => l.unit || ""))], unit = units.length === 1 ? units[0] : null;
@@ -2616,7 +2616,7 @@ const ACT = {
   laymerge: d => {
     const i = getDoc(d.id), L = laySave(i), sel = UI.laySel || {}, pick = L.rows.filter(r => sel[r.k] && r.ids.length); if (pick.length < 2) return toast("Tick two or more lines to merge.");
     const lines = pick.flatMap(r => r.ids).map(id => (i.lines || []).find(l => l.id === id)), kinds = [...new Set(lines.map(lineKind))];
-    const row = {k:uid("r"), ids:pick.flatMap(r => r.ids), label:"", kind:kinds.length === 1 ? kinds[0] : ""};
+    const named = kinds.length > 1 ? kinds.filter(Boolean) : kinds, row = {k:uid("r"), ids:pick.flatMap(r => r.ids), label:"", kind:named.length === 1 ? named[0] : ""};
     L.rows.splice(L.rows.indexOf(pick[0]), 0, row); L.rows = L.rows.filter(r => !pick.includes(r));
     // only one merged line per kind collects lines added later
     if (row.kind) L.rows.forEach(r => { if (r !== row && r.kind === row.kind) r.kind = ""; });
