@@ -1193,7 +1193,7 @@ function quotePaper(j){
     <div class="rule"></div>
     <div class="parties"><div><div class="lbl">Prepared for</div><div class="who">${esc(c.name)}</div>${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}${esc(j.site || c.address || "")}</div>
       <div><div class="lbl">From</div><div class="who">${esc(s.name)}</div>${esc(s.trading)}<br>${esc(s.phone)}<br>${esc(s.email)}</div></div>
-    <div class="scope brk"><div class="lbl">The job</div><h2>${esc(j.title || "")}</h2>${j.scope ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(j.scope)}</div>` : ""}</div>
+    <div class="scope brk"><div class="lbl">Details</div><h2>${esc(j.title || "")}</h2>${j.scope ? `<div style="margin-top:4px;white-space:pre-wrap">${esc(j.scope)}</div>` : ""}</div>
     ${rows ? `<table><thead><tr><th>${rate ? "The work" : "Description"}</th><th class="n" style="width:130px">${showMat !== "hide" && !rate ? "Materials" : ""}</th><th class="n" style="width:80px">${hideH ? "" : "Time"}</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
     ${rate ? (() => { const est = rateEstimate(j), m = markupOf(j); return `<div class="totals brk">
       <div><span>${byHour(j) ? "Hourly rate" : "Day rate"}</span><span>${money2(byHour(j) ? jobRate(j) : dayRateOf(j))} per ${byHour(j) ? "hour" : "day"}</span></div>
@@ -1218,8 +1218,8 @@ function quotePaper(j){
 /* Invoice layout: what the client sees. It changes only the printed invoice. The lines underneath (hours,
    receipts, amounts) and so the totals, job costs and tax figures stay exactly as they are.
    i.lay = {show:{flag:1|0}, rows:[{k, ids:[line ids], label, kind:"lab"|"mat"|""}]} */
-const LAY_FLAGS = [["ref", "What the job was (the \"For\" box)"], ["jobNo", "Job number"], ["contact", "Client's phone, email and address"], ["dates", "Dates on each line"], ["site", "Site address on each line"], ["time", "Start and finish times"], ["qty", "Number of days or hours"], ["rate", "Your rate, or price each"], ["breakdown", "Labour and materials subtotals"], ["gst", "\"Not registered for GST\" note"], ["rcpt", "\"Receipts available on request\" note"], ["bank", "Bank details"], ["terms", "Payment terms note"], ["footer", "Your contact details at the bottom"]];
-const LAY_BASE = {ref:1, jobNo:0, contact:1, gst:1, rcpt:1, bank:1, terms:1, footer:1};
+const LAY_FLAGS = [["ref", "Short description of the job (the \"Details\" box)"], ["jobNo", "Job number"], ["addr", "Site or client address under their name"], ["contact", "Client's phone and email"], ["dates", "Dates on each line"], ["site", "Site address on each line"], ["time", "Start and finish times"], ["qty", "Number of days or hours"], ["rate", "Your rate, or price each"], ["breakdown", "Labour and materials subtotals"], ["gst", "\"Not registered for GST\" note"], ["rcpt", "\"Receipts available on request\" note"], ["bank", "Bank details"], ["terms", "Payment terms note"], ["footer", "Your contact details at the bottom"]];
+const LAY_BASE = {ref:1, jobNo:0, addr:1, contact:1, gst:1, rcpt:1, bank:1, terms:1, footer:1};
 const LAY_PRESETS = {
   summary:{name:"Summary", merge:true, show:{...LAY_BASE, rcpt:0, dates:0, site:0, time:0, qty:0, rate:0, breakdown:0}},
   items:{name:"Itemised", show:{...LAY_BASE, dates:1, site:0, time:0, qty:1, rate:1, breakdown:1}},
@@ -1277,9 +1277,9 @@ function invPaper(i){
   return `<div class="paper">
     <div class="ph">${logoHtml()}<div class="ttl"><h1>INVOICE</h1><div class="meta"><span>Invoice no.</span><b>${esc(i.number)}</b><span>Date</span><b>${dAU(i.date)}</b>${i.due ? `<span>Due</span><b>${dAU(i.due)}</b>` : ""}${sh.jobNo && jobNo(j) ? `<span>Job no.</span><b>${esc(jobNo(j))}</b>` : ""}</div></div></div>
     <div class="rule"></div>
-    <div class="parties"><div><div class="lbl">Bill to</div><div class="who">${esc(c.name)}</div>${sh.contact ? `${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}${esc(c.address || "")}` : ""}</div>
+    <div class="parties"><div><div class="lbl">Bill to</div><div class="who">${esc(c.name)}</div>${sh.contact ? `${c.phone ? esc(c.phone) + "<br>" : ""}${c.email ? esc(c.email) + "<br>" : ""}` : ""}${sh.addr ? esc((j && j.site) || c.address || "") : ""}</div>
       <div><div class="lbl">From</div><div class="who">${esc(s.name)}</div>${esc(s.trading)}<br>ABN ${esc(s.abn)}</div></div>
-    ${sh.ref && i.ref ? `<div class="scope brk"><div class="lbl">For</div><h2>${esc(i.ref)}</h2></div>` : ""}
+    ${sh.ref && i.ref ? `<div class="scope brk"><div class="lbl">Details</div><h2>${esc(sh.addr && j && j.site && i.ref === j.title + ", " + j.site ? j.title : i.ref)}</h2></div>` : ""}
     <table><thead><tr>${hasDate ? `<th style="width:96px">Date</th>` : ""}${hasSite ? `<th style="width:150px">Site</th>` : ""}<th>Description</th>${hasQty ? `<th class="n" style="width:120px">${sh.time && rows.some(v => v.time) ? "Time" : ""}</th>` : ""}<th class="n" style="width:96px">Amount</th></tr></thead><tbody>${body}</tbody></table>
     <div class="totals brk">
       ${sh.breakdown && sh.qty && hrs ? `<div><span>Total hours</span><span>${fmtH(hrs)}</span></div>` : ""}${sh.breakdown && sh.qty && dys ? `<div><span>Days worked</span><span>${daysTxt(dys)}</span></div>` : ""}
@@ -2289,7 +2289,7 @@ VIEWS.invoice = () => {
       <label class="field"><span>Due</span><input type="date" ${K("due")} value="${esc(i.due)}"></label>
       ${i.status === "paid" ? `<label class="field"><span>Paid on</span><input type="date" ${K("paidDate")} value="${esc(i.paidDate)}"></label><label class="field"><span>Amount received</span><input type="number" step="any" ${K("paidAmount")} value="${i.paidAmount ?? invTotal(i)}"></label>` : ""}
     </div>
-    <label class="field" style="margin-top:10px"><span>For (shows under the header, optional)</span><input type="text" ${K("ref")} value="${esc(i.ref)}" placeholder="e.g. Deck at 12 Smith St, Merewether"></label>
+    <label class="field" style="margin-top:10px"><span>Details (a short description of the job)</span><input type="text" ${K("ref")} value="${esc(i.ref)}" placeholder="e.g. Internal door + deck + maintenance"></label>
     <div class="row" style="margin-top:10px"><span class="small muted">Enter lines</span><div class="seg"><button class="${days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="days">Day by day (labour hire)</button><button class="${!days ? "on" : ""}" data-act="invmode" data-id="${i.id}" data-m="items">Line items</button></div></div></div>
     ${lines}
     <div class="row">${(() => { const j = getDoc(i.jobId); return isRate(j) && !byHour(j) ? `<button class="btn" data-act="addline" data-id="${i.id}" data-u="day">${ic("plus")} Day line</button>` : `<button class="btn" data-act="addline" data-id="${i.id}" data-u="h">${ic("plus")} Hours line</button>`; })()}<button class="btn" data-act="addline" data-id="${i.id}" data-u="">${ic("plus")} Item line</button><button class="btn" data-act="pulllogs" data-id="${i.id}">${ic("log")} Add days from logs</button>${rateJobsFor(i).length ? `<button class="btn" data-act="pullexps" data-id="${i.id}">${ic("plus")} Add receipts</button>` : ""}${i.status !== "paid" && matReprice(i).length ? `<button class="btn" data-act="matreprice" data-id="${i.id}">Charge materials at ${markupOf(getDoc(i.jobId))}% on top</button>` : ""}</div>
@@ -2589,7 +2589,7 @@ const ACT = {
       <div class="row" style="justify-content:flex-end"><button class="btn" data-act="modal-cancel">Cancel</button><button class="btn primary" data-act="modal-ok">Create</button></div>`,
       () => ({cli:j ? j.clientId : clientFromBox("m_cli"), from:mval("m_from"), d1:mval("m_d1"), d2:mval("m_d2"), dep:num(mval("m_dep"))}));
     if (!ok) return;
-    const s = S(); const inv = {id:uid("inv"), kind:"invoice", number:nextNo("i"), date:today(), due:addDays(today(), num(s.payDays) || 7), clientId:ok.cli || "", jobId:j ? j.id : "", status:"draft", mode:"items", lines:[], ref:j ? j.title + (j.site ? ", " + j.site : "") : ""};
+    const s = S(); const inv = {id:uid("inv"), kind:"invoice", number:nextNo("i"), date:today(), due:addDays(today(), num(s.payDays) || 7), clientId:ok.cli || "", jobId:j ? j.id : "", status:"draft", mode:"items", lines:[], ref:j ? j.title || "" : ""};
     if (ok.from === "quote" && j) {
       const q = quoteCalc(j);
       j.sections.forEach((sec, si) => { const c = q.secs[si]; const amt = round2(c.labour + c.mat); if (amt) inv.lines.push({id:uid("l"), desc:(sec.name || "Section " + (si + 1)) + ((sec.tasks || []).filter(t => t.text).length ? "\n" + sec.tasks.filter(t => t.text).map(t => "• " + t.text).join("\n") : ""), qty:1, rate:amt, unit:""}); });
