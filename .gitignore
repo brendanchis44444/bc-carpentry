@@ -1,0 +1,35 @@
+# Secrets and private configs (the Firebase web config is baked into index.html on purpose; nothing else secret goes here)
+.env
+.env.*
+*secret*
+*.key
+*.pem
+*proxy*.json
+*webhook*
+pwa-config/
+.claude/settings.local.json
+
+# Real data: backups, photos, receipts (this repo is public)
+*backup*.json
+*.zip
+private/
+data/
+
+# Build output, deps, envs, logs
+dist/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.log
+
+# Old copies and editor junk
+*.bak
+*.orig
+*~
+.DS_Store
+Thumbs.db
+
+# Private notes for Claude (kept in the project folder, not published)
+CLAUDE.md
+STATUS.md
